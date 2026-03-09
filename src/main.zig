@@ -57,6 +57,99 @@ const palette: [16]u32 = .{
     0xFFDEEED6, // 15: White
 };
 
+// Terrain generation rules - 10 tiles, each with 8 possible next tiles
+// Selected rules that generate best results
+const terrain_rules: [10][8]u8 = .{
+    .{ 0, 0, 1, 1, 0, 0, 1, 1 }, // Tile 0
+    .{ 1, 0, 1, 0, 1, 2, 1, 2 }, // Tile 1
+    .{ 2, 0, 1, 2, 1, 2, 3, 3 }, // Tile 2
+    .{ 3, 2, 1, 3, 2, 1, 4, 4 }, // Tile 3
+    .{ 4, 3, 2, 4, 3, 4, 5, 5 }, // Tile 4
+    .{ 5, 5, 3, 4, 4, 6, 6, 7 }, // Tile 5
+    .{ 6, 5, 5, 6, 6, 7, 6, 7 }, // Tile 6
+    .{ 7, 6, 7, 7, 7, 8, 8, 8 }, // Tile 7
+    .{ 8, 7, 7, 8, 8, 9, 9, 9 }, // Tile 8
+    .{ 9, 7, 8, 8, 9, 9, 9, 9 }, // Tile 9
+};
+
+// Simple LCG random number generator
+var rng_seed: u32 = 12345;
+fn random() u32 {
+    rng_seed = rng_seed *% 1103515245 +% 12345;
+    return (rng_seed >> 16) & 0x7FFF;
+}
+
+fn randomU8(max: u8) u8 {
+    return @intCast(random() % @as(u32, max));
+}
+
+// Maximum map size (1920x1080 / 16 = 120x68 tiles)
+const MAX_MAP_COLS: u32 = 120;
+const MAX_MAP_ROWS: u32 = 68;
+var terrain_map: [MAX_MAP_COLS * MAX_MAP_ROWS]u8 = undefined;
+
+// Generate procedural terrain map
+fn generateTerrain(fb: [*]u32, fb_stride: u32, screen_w: u32, screen_h: u32) void {
+    const map_cols = screen_w / TILE_SIZE;
+    const map_rows = screen_h / TILE_SIZE;
+
+    // Generate map data
+    var row: u32 = 0;
+    while (row < map_rows) : (row += 1) {
+        var col: u32 = 0;
+        while (col < map_cols) : (col += 1) {
+            const map_idx = row * map_cols + col;
+            var tile: u8 = 0;
+
+            if (col == 0 and row == 0) {
+                // First tile (0,0): random
+                tile = randomU8(10);
+            } else if (col == 0) {
+                // First column (not first row): check top neighbor only
+                const top_tile = terrain_map[map_idx - map_cols];
+                const rule_idx = randomU8(8);
+                tile = terrain_rules[top_tile][rule_idx];
+            } else if (row == 0) {
+                // First row (not first column): check left neighbor only
+                const left_tile = terrain_map[map_idx - 1];
+                const rule_idx = randomU8(8);
+                tile = terrain_rules[left_tile][rule_idx];
+            } else {
+                // Other tiles: randomly choose between left and top neighbor rules
+                const left_tile = terrain_map[map_idx - 1];
+                const top_tile = terrain_map[map_idx - map_cols];
+                const rule_idx = randomU8(8);
+
+                // 50/50 chance to use left or top tile rules
+                if (randomU8(2) == 0) {
+                    tile = terrain_rules[left_tile][rule_idx];
+                } else {
+                    tile = terrain_rules[top_tile][rule_idx];
+                }
+            }
+
+            // Clamp to valid range 0-9
+            if (tile > 9) tile = 9;
+
+            terrain_map[map_idx] = tile;
+        }
+    }
+
+    // Draw the map
+    row = 0;
+    while (row < map_rows) : (row += 1) {
+        var col: u32 = 0;
+        while (col < map_cols) : (col += 1) {
+            const tile = terrain_map[row * map_cols + col];
+            const tile_sheet_x = tile % 16;
+            const tile_sheet_y = tile / 16;
+            const screen_x = col * TILE_SIZE;
+            const screen_y = row * TILE_SIZE;
+            drawTile(fb, fb_stride, tile_sheet_x, tile_sheet_y, screen_x, screen_y);
+        }
+    }
+}
+
 const PALETTE_COLS: u32 = 4;
 const PALETTE_ROWS: u32 = 4;
 const PALETTE_CELL_SIZE: u32 = 32;
@@ -174,16 +267,8 @@ pub fn main() uefi.Status {
     // Save black background to canvas
     simdCopy(canvas, fb, fb_size);
 
-    // Draw logo using tiles (tile 0,0 to 7,7 for 128x128)
-    const logo_tile_x: u32 = (screen_w - LOGO_W) >> 1;
-    const logo_tile_y: u32 = (screen_h - LOGO_H) >> 1;
-    var tile_row: u32 = 0;
-    while (tile_row < 8) : (tile_row += 1) {
-        var tile_col: u32 = 0;
-        while (tile_col < 8) : (tile_col += 1) {
-            drawTile(fb, stride, tile_col, tile_row, logo_tile_x + tile_col * TILE_SIZE, logo_tile_y + tile_row * TILE_SIZE);
-        }
-    }
+    // Generate and draw procedural terrain
+    generateTerrain(fb, stride, screen_w, screen_h);
 
     // Draw palette
     var pr: u32 = 0;
