@@ -37,52 +37,60 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    const optimize = b.standardOptimizeOption(.{});
+
     // -----------------------------------------------------------------------
-    // Target: x86 (32-bit) UEFI
+    // Build BOTH 32-bit and 64-bit UEFI binaries
     //
-    // .cpu_arch = .x86   → 32-bit IA-32 PE32 image (not PE32+)
-    // .os_tag   = .uefi  → Zig emits a UEFI application with entry shim,
-    //                      and populates system_table + handle globals
+    // 32-bit (ia32): For older systems like Intel Compute Stick STCK1A32WFC
+    // 64-bit (x64):  For modern PCs (most common)
     //
-    // MUST be .x86 — the STCK1A32WFC has a 32-bit UEFI firmware and will
-    // refuse to load a 64-bit PE32+ image (bootx64.efi / x86_64 target).
+    // UEFI firmware loads the appropriate file based on its architecture:
+    // - 32-bit UEFI → BOOTIA32.EFI
+    // - 64-bit UEFI → BOOTX64.EFI
     // -----------------------------------------------------------------------
-    const target = b.resolveTargetQuery(.{
+
+    // 32-bit x86 target
+    const target_32 = b.resolveTargetQuery(.{
         .cpu_arch = .x86,
         .os_tag = .uefi,
     });
 
-    // Allow -Doptimize= override. ReleaseSmall recommended for EFI binaries.
-    const optimize = b.standardOptimizeOption(.{});
-
-    // -----------------------------------------------------------------------
-    // 0.15.x API: source file + target + optimize all go into createModule().
-    // -----------------------------------------------------------------------
-    const exe = b.addExecutable(.{
+    const exe_32 = b.addExecutable(.{
         .name = "BOOTIA32",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
-            .target = target,
+            .target = target_32,
             .optimize = optimize,
         }),
     });
 
-    // -----------------------------------------------------------------------
-    // @embedFile in main.zig resolves paths relative to src/main.zig itself,
-    // so "../assets/logo.raw" is correct. No build.zig wiring needed for
-    // embedded files — the Zig compiler handles them automatically.
-    //
-    // The comptime size check in main.zig will catch a missing or wrong-sized
-    // logo.raw at compile time with a clear error message.
-    // -----------------------------------------------------------------------
+    // 64-bit x86_64 target
+    const target_64 = b.resolveTargetQuery(.{
+        .cpu_arch = .x86_64,
+        .os_tag = .uefi,
+    });
 
-    // -----------------------------------------------------------------------
-    // Install to zig-out/EFI/BOOT/BOOTIA32.EFI for UEFI auto-boot
-    // -----------------------------------------------------------------------
-    const install = b.addInstallArtifact(exe, .{
+    const exe_64 = b.addExecutable(.{
+        .name = "BOOTX64",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target_64,
+            .optimize = optimize,
+        }),
+    });
+
+    // Install both binaries
+    const install_32 = b.addInstallArtifact(exe_32, .{
         .dest_sub_path = "EFI/BOOT/BOOTIA32.EFI",
     });
-    b.getInstallStep().dependOn(&install.step);
+
+    const install_64 = b.addInstallArtifact(exe_64, .{
+        .dest_sub_path = "EFI/BOOT/BOOTX64.EFI",
+    });
+
+    b.getInstallStep().dependOn(&install_32.step);
+    b.getInstallStep().dependOn(&install_64.step);
 
     // -----------------------------------------------------------------------
     // `zig build run` — test in QEMU with 32-bit OVMF firmware.
@@ -104,6 +112,7 @@ pub fn build(b: *std.Build) void {
         "-drive", "format=raw,file=fat:rw:zig-out/bin",
         "-vga",   "std",
         "-net",   "none",
+        "-usb", "-device", "usb-mouse", // Enable USB mouse support
     });
     qemu.step.dependOn(b.getInstallStep());
 
@@ -113,4 +122,128 @@ pub fn build(b: *std.Build) void {
     // Alias 'qemu' step for easier typing
     const qemu_step = b.step("qemu", "Run in QEMU with 32-bit UEFI (requires qemu-system-i386 + OVMF32)");
     qemu_step.dependOn(&qemu.step);
+
+    // -----------------------------------------------------------------------
+    // `zig build image` — Create GPT-partitioned bootable USB image
+    //
+    // Creates: zig-out/uefi-boot.img (64MB GPT with ESP containing bootloader)
+    //
+    // Flash to USB:
+    //   sudo dd if=zig-out/uefi-boot.img of=/dev/sdX bs=4M status=progress
+    //   (Replace /dev/sdX with your USB device! Use lsblk to find it.)
+    //
+    // Or manually format USB:
+    // sudo parted /dev/sdX --script -- mklabel gpt
+    // sudo parted /dev/sdX --script -- mkpart primary fat32 1MiB 100%
+    // sudo parted /dev/sdX --script -- set 1 esp on
+    // sudo mkfs.fat -F 32 /dev/sdX1
+    // sudo mkdir -p /mnt/efi && sudo mount /dev/sdX1 /mnt/efi
+    // sudo mkdir -p /mnt/efi/EFI/BOOT
+    // sudo cp zig-out/bin/EFI/BOOT/BOOTIA32.EFI /mnt/efi/EFI/BOOT/
+    // sudo cp zig-out/bin/EFI/BOOT/BOOTX64.EFI /mnt/efi/EFI/BOOT/
+    // sudo umount /mnt/efi
+    //
+    // Requirements: parted, dosfstools (mkfs.fat)
+    // -----------------------------------------------------------------------
+    const image_script = b.addSystemCommand(&.{
+        "sh", "-c",
+        // Step 1: Create 64MB disk image
+        "cd zig-out && rm -f uefi-boot.img && " ++
+            "dd if=/dev/zero of=uefi-boot.img bs=1M count=64 status=none && " ++
+            // Step 2: Create GPT with ESP partition (type EF00)
+            "parted -s uefi-boot.img mklabel gpt && " ++
+            "parted -s uefi-boot.img mkpart primary fat32 1MiB 63MiB && " ++
+            "parted -s uefi-boot.img set 1 esp on && " ++
+            // Step 3: Setup loop device for the partition
+            "LOOP_DEV=$(sudo losetup -f --show -P uefi-boot.img) && " ++
+            "PART_DEV=\"${LOOP_DEV}p1\" && " ++
+            // Step 4: Format ESP as FAT32
+            "sudo mkfs.fat -F 32 -n \"UEFI\" \"$PART_DEV\" && " ++
+            // Step 5: Mount and copy BOTH EFI files (32-bit and 64-bit)
+            "sudo mkdir -p /tmp/uefi-esp && " ++
+            "sudo mount \"$PART_DEV\" /tmp/uefi-esp && " ++
+            "sudo mkdir -p /tmp/uefi-esp/EFI/BOOT && " ++
+            "sudo cp bin/EFI/BOOT/BOOTIA32.EFI /tmp/uefi-esp/EFI/BOOT/ && " ++
+            "sudo cp bin/EFI/BOOT/BOOTX64.EFI /tmp/uefi-esp/EFI/BOOT/ && " ++
+            "echo 'Files copied:' && " ++
+            "ls -la /tmp/uefi-esp/EFI/BOOT/ && " ++
+            "sudo umount /tmp/uefi-esp && " ++
+            "sudo rm -rf /tmp/uefi-esp && " ++
+            "sudo losetup -d \"$LOOP_DEV\" && " ++
+            // Step 6: Show result
+            "echo '' && " ++
+            "echo '========================================' && " ++
+            "echo 'UEFI boot image created successfully!' && " ++
+            "echo '========================================' && " ++
+            "echo 'File: zig-out/uefi-boot.img' && " ++
+            "echo 'Size: 64MB (GPT partitioned with ESP)' && " ++
+            "echo 'Contents:' && " ++
+            "echo '  /EFI/BOOT/BOOTIA32.EFI (32-bit)' && " ++
+            "echo '  /EFI/BOOT/BOOTX64.EFI (64-bit)' && " ++
+            "echo '' && " ++
+            "echo 'To flash to USB:' && " ++
+            "echo ' sudo dd if=zig-out/uefi-boot.img of=/dev/sdX bs=4M status=progress' && " ++
+            "echo '' && " ++
+            "echo 'Replace /dev/sdX with your USB device (check with: lsblk)'",
+    });
+    image_script.step.dependOn(b.getInstallStep());
+
+    const image_step = b.step("image", "Create GPT-partitioned USB image with 32+64 bit (requires sudo)");
+    image_step.dependOn(&image_script.step);
+
+    // -----------------------------------------------------------------------
+    // `zig build simple-image` — Create simple FAT image (no partition table)
+    //
+    // This creates just a FAT32 filesystem without GPT. Some systems can boot
+    // this, but most real hardware requires GPT partition table.
+    // Use `zig build image` for proper hardware compatibility.
+    //
+    // No sudo required for this version.
+    // -----------------------------------------------------------------------
+    const simple_image_script = b.addSystemCommand(&.{
+        "sh", "-c",
+        "cd zig-out && rm -f uefi-simple.img && " ++
+            "dd if=/dev/zero of=uefi-simple.img bs=1M count=32 status=none && " ++
+            "mkfs.fat -F 32 -n \"UEFI\" uefi-simple.img && " ++
+            "mmd -i uefi-simple.img ::/EFI && " ++
+            "mmd -i uefi-simple.img ::/EFI/BOOT && " ++
+            "mcopy -i uefi-simple.img bin/EFI/BOOT/BOOTIA32.EFI ::/EFI/BOOT/BOOTIA32.EFI && " ++
+            "mcopy -i uefi-simple.img bin/EFI/BOOT/BOOTX64.EFI ::/EFI/BOOT/BOOTX64.EFI && " ++
+            "echo 'Simple FAT image created: zig-out/uefi-simple.img' && " ++
+            "echo 'Contains: BOOTIA32.EFI + BOOTX64.EFI' && " ++
+            "echo '(No partition table - mainly for QEMU testing)'",
+    });
+    simple_image_script.step.dependOn(b.getInstallStep());
+
+    const simple_image_step = b.step("simple-image", "Create simple FAT image with 32+64 bit (no GPT)");
+    simple_image_step.dependOn(&simple_image_script.step);
+
+    // -----------------------------------------------------------------------
+    // `zig build usb /dev/sdX` — Format USB drive directly (most reliable)
+    //
+    // This formats a USB drive with GPT + FAT32 and copies the EFI file.
+    // The drive will show up as a normal FAT32 USB drive in your OS.
+    //
+    // Usage:
+    //   zig build usb -- /dev/sdX
+    //   Example: zig build usb -- /dev/sdb
+    //
+    // Find your device with: lsblk
+    // WARNING: This ERASES all data on the USB drive!
+    //
+    // After formatting, you can:
+    //   1. Eject and re-insert the USB to see it as a regular drive
+    //   2. Boot from it (disable Secure Boot, select USB in boot menu)
+    // -----------------------------------------------------------------------
+    const usb_script = b.addSystemCommand(&.{
+        "sudo", "./scripts/format-usb.sh",
+    });
+    usb_script.step.dependOn(b.getInstallStep());
+    // Allow extra arguments (the device path)
+    if (b.args) |args| {
+        usb_script.addArgs(args);
+    }
+
+    const usb_step = b.step("usb", "Format USB drive for booting (usage: zig build usb -- /dev/sdX)");
+    usb_step.dependOn(&usb_script.step);
 }
