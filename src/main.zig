@@ -26,6 +26,17 @@ const LOGO_W: u32 = 128;
 const LOGO_H: u32 = 128;
 const logo_raw: []const u8 = @embedFile("logo.raw");
 
+// Tileset from PPM (256x128 pixels, 16x16 tiles = 16x8 tiles)
+const TILE_SIZE: u32 = 16;
+const TILESHEET_W: u32 = 256;
+const TILESHEET_H: u32 = 128;
+const TILES_PER_ROW: u32 = TILESHEET_W / TILE_SIZE; // 16
+const TILES_PER_COL: u32 = TILESHEET_H / TILE_SIZE; // 8
+const tileset_ppm: []const u8 = @embedFile("tileset.ppm");
+
+// PPM header size: "P6\n256 128\n255\n" = 12 bytes
+const PPM_HEADER_SIZE: usize = 12;
+
 // DawnBringer 16 color palette (ARGB format)
 const palette: [16]u32 = .{
     0xFF140C1C, // 0: Very dark blue-black
@@ -68,6 +79,36 @@ fn simdCopy(dst: [*]u32, src: [*]const u32, len: usize) void {
     var j: usize = 0;
     while (j < remainder) : (j += 1) {
         dst[rem_start + j] = src[rem_start + j];
+    }
+}
+
+// Convert RGB (PPM) to BGRA (framebuffer)
+fn rgbToBgra(r: u8, g: u8, b: u8) u32 {
+    return 0xFF000000 | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
+}
+
+// Draw a tile from the tileset to the framebuffer
+// tile_x, tile_y: position in tilesheet (0-15, 0-7)
+// screen_x, screen_y: position on screen
+fn drawTile(fb: [*]u32, fb_stride: u32, tile_x: u32, tile_y: u32, screen_x: u32, screen_y: u32) void {
+    const ppm_data: [*]const u8 = @ptrCast(tileset_ppm.ptr + PPM_HEADER_SIZE);
+    const tilesheet_stride = TILESHEET_W * 3; // 256 pixels * 3 bytes RGB
+
+    var ty: u32 = 0;
+    while (ty < TILE_SIZE) : (ty += 1) {
+        // Calculate row offset in tilesheet
+        const tile_row_y = tile_y * TILE_SIZE + ty;
+        const row_offset = tile_row_y * tilesheet_stride;
+        const tile_col_x = tile_x * TILE_SIZE * 3; // 16 pixels * 3 bytes
+
+        var tx: u32 = 0;
+        while (tx < TILE_SIZE) : (tx += 1) {
+            const pixel_offset = row_offset + tile_col_x + (tx * 3);
+            const r = ppm_data[pixel_offset];
+            const g = ppm_data[pixel_offset + 1];
+            const b = ppm_data[pixel_offset + 2];
+            fb[(screen_y + ty) * fb_stride + (screen_x + tx)] = rgbToBgra(r, g, b);
+        }
     }
 }
 
@@ -133,16 +174,15 @@ pub fn main() uefi.Status {
     // Save black background to canvas
     simdCopy(canvas, fb, fb_size);
 
-    // Draw logo
-    const blit_x: u32 = (screen_w - LOGO_W) >> 1;
-    const blit_y: u32 = (screen_h - LOGO_H) >> 1;
-    const logo_pixels: [*]const u32 = @ptrCast(@alignCast(logo_raw.ptr));
-    var row: u32 = 0;
-    while (row < LOGO_H) : (row += 1) {
-        const dst_offset = (blit_y + row) * stride + blit_x;
-        const src_offset = row * LOGO_W;
-        const dst_ptr: [*]u32 = @constCast(@volatileCast(fb + dst_offset));
-        @memcpy(dst_ptr[0..LOGO_W], logo_pixels[src_offset..][0..LOGO_W]);
+    // Draw logo using tiles (tile 0,0 to 7,7 for 128x128)
+    const logo_tile_x: u32 = (screen_w - LOGO_W) >> 1;
+    const logo_tile_y: u32 = (screen_h - LOGO_H) >> 1;
+    var tile_row: u32 = 0;
+    while (tile_row < 8) : (tile_row += 1) {
+        var tile_col: u32 = 0;
+        while (tile_col < 8) : (tile_col += 1) {
+            drawTile(fb, stride, tile_col, tile_row, logo_tile_x + tile_col * TILE_SIZE, logo_tile_y + tile_row * TILE_SIZE);
+        }
     }
 
     // Draw palette
