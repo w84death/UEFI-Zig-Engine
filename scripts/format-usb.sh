@@ -17,7 +17,7 @@ fi
 USB_DEVICE="$1"
 
 # Safety check - don't allow operating on system disks
-if [[ "$USB_DEVICE" == *"nvme"* ]] || [[ "$USB_DEVICE" == *"mmc"* ]]; then
+if [[ "$USB_DEVICE" == *"nvme"* ]]; then
     echo "ERROR: This looks like a system disk. Use a USB device like /dev/sdb"
     exit 1
 fi
