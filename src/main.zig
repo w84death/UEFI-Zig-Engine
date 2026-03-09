@@ -104,6 +104,8 @@ pub fn main() uefi.Status {
     // Initialize cursor position (center of screen)
     var cursor_x: i32 = @intCast(screen_w >> 1);
     var cursor_y: i32 = @intCast(screen_h >> 1);
+    var prev_cursor_x: i32 = cursor_x;
+    var prev_cursor_y: i32 = cursor_y;
 
     // Draw status indicator (green=mouse available, red=not available)
     const status_color: u32 = if (mouse_available) 0xFF00FF00 else 0xFF0000FF;
@@ -115,8 +117,17 @@ pub fn main() uefi.Status {
         }
     }
 
-    // Draw initial cursor
-    fb[@as(u32, @intCast(cursor_y)) * stride + @as(u32, @intCast(cursor_x))] = 0xFF0000FF;
+    // Draw initial crosshair (black lines intersecting at cursor)
+    // Horizontal line
+    var i: u32 = 0;
+    while (i < screen_w) : (i += 1) {
+        fb[@as(u32, @intCast(cursor_y)) * stride + i] = 0xFF000000;
+    }
+    // Vertical line
+    i = 0;
+    while (i < screen_h) : (i += 1) {
+        fb[i * stride + @as(u32, @intCast(cursor_x))] = 0xFF000000;
+    }
 
     // Setup event-based input handling
     var index: usize = undefined;
@@ -159,24 +170,50 @@ pub fn main() uefi.Status {
         // Handle mouse event (index 1) - only if mouse is available
         if (mouse_available and index == 1) {
             if (mouse.?.getState()) |state| {
-                // Erase old cursor
-                fb[@as(u32, @intCast(cursor_y)) * stride + @as(u32, @intCast(cursor_x))] = bg_color;
+                // Scale raw values to pixels (20% sensitivity, divide by 5000)
+                const dx = @divTrunc(state.relative_movement_x, 5000);
+                const dy = @divTrunc(state.relative_movement_y, 5000);
 
-                // Scale raw values to pixels (values are large, divide by 1000)
-                const dx = @divTrunc(state.relative_movement_x, 1000);
-                const dy = @divTrunc(state.relative_movement_y, 1000);
-
-                cursor_x += @intCast(dx);
-                cursor_y += @intCast(dy);
+                // Calculate new position
+                var new_x = cursor_x + @as(i32, @intCast(dx));
+                var new_y = cursor_y + @as(i32, @intCast(dy));
 
                 // Clamp to screen bounds
-                if (cursor_x < 0) cursor_x = 0;
-                if (cursor_y < 0) cursor_y = 0;
-                if (cursor_x >= @as(i32, @intCast(screen_w))) cursor_x = @intCast(screen_w - 1);
-                if (cursor_y >= @as(i32, @intCast(screen_h))) cursor_y = @intCast(screen_h - 1);
+                if (new_x < 0) new_x = 0;
+                if (new_y < 0) new_y = 0;
+                if (new_x >= @as(i32, @intCast(screen_w))) new_x = @intCast(screen_w - 1);
+                if (new_y >= @as(i32, @intCast(screen_h))) new_y = @intCast(screen_h - 1);
 
-                // Draw new cursor (blue pixel)
-                fb[@as(u32, @intCast(cursor_y)) * stride + @as(u32, @intCast(cursor_x))] = 0xFF0000FF;
+                // Only redraw if position changed
+                if (new_x != cursor_x or new_y != cursor_y) {
+                    // Erase old crosshair (restore white background)
+                    var h: u32 = 0;
+                    while (h < screen_w) : (h += 1) {
+                        fb[@as(u32, @intCast(prev_cursor_y)) * stride + h] = bg_color;
+                    }
+                    var v: u32 = 0;
+                    while (v < screen_h) : (v += 1) {
+                        fb[v * stride + @as(u32, @intCast(prev_cursor_x))] = bg_color;
+                    }
+
+                    // Update positions
+                    prev_cursor_x = cursor_x;
+                    prev_cursor_y = cursor_y;
+                    cursor_x = new_x;
+                    cursor_y = new_y;
+
+                    // Draw new crosshair (black lines)
+                    // Horizontal line
+                    h = 0;
+                    while (h < screen_w) : (h += 1) {
+                        fb[@as(u32, @intCast(cursor_y)) * stride + h] = 0xFF000000;
+                    }
+                    // Vertical line
+                    v = 0;
+                    while (v < screen_h) : (v += 1) {
+                        fb[v * stride + @as(u32, @intCast(cursor_x))] = 0xFF000000;
+                    }
+                }
 
                 // Draw on left click (red dot around cursor)
                 if (state.left_button) {
