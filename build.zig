@@ -108,4 +108,28 @@ pub fn build(b: *std.Build) void {
 
     const usb_step = b.step("usb", "Format USB drive for booting (usage: zig build usb -- /dev/sdX)");
     usb_step.dependOn(&usb_script.step);
+
+    // -----------------------------------------------------------------------
+    // `zig build update -- /dev/sdX` — Update existing USB drive (fast)
+    //
+    // This mounts an already-formatted USB drive and just copies/overwrites
+    // the EFI files without reformatting. Much faster for testing.
+    //
+    // Usage: zig build update -- /dev/sdX
+    // Example: zig build update -- /dev/sdb
+    //
+    // The USB drive must already be formatted with GPT/FAT32 (use `zig build usb` first)
+    // -----------------------------------------------------------------------
+    const update_script = b.addSystemCommand(&.{
+        "sudo", "./scripts/update-usb.sh",
+    });
+    update_script.step.dependOn(b.getInstallStep());
+
+    // Allow extra arguments (the device path)
+    if (b.args) |args| {
+        update_script.addArgs(args);
+    }
+
+    const update_step = b.step("update", "Update EFI files on existing USB (usage: zig build update -- /dev/sdX)");
+    update_step.dependOn(&update_script.step);
 }
