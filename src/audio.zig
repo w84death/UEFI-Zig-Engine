@@ -91,9 +91,17 @@ pub const AudioPlayer = struct {
         self.is_playing = false;
     }
 
-    // Clear queue
+    // Clear queue - reset everything to clean state
     pub fn clear(self: *AudioPlayer) void {
-        self.stop();
+        // Stop any current playback first
+        self.is_playing = false;
+        stopTone();
+        // Small delay to ensure hardware settles (about 1ms worth of nops)
+        var i: u32 = 0;
+        while (i < 10000) : (i += 1) {
+            asm volatile ("nop");
+        }
+        // Reset all state
         self.num_notes = 0;
         self.current_note = 0;
         self.frame_counter = 0;
@@ -120,38 +128,46 @@ pub const AudioPlayer = struct {
     // Stop playing
     pub fn stop(self: *AudioPlayer) void {
         self.is_playing = false;
+        self.current_note = 0;
+        self.frame_counter = 0;
         stopTone();
     }
 
     // Update called every frame (60fps assumed)
     pub fn update(self: *AudioPlayer) void {
+        // If not playing, ensure speaker is off and return
         if (!self.is_playing) {
-            // Make sure speaker is off when not playing
             stopTone();
             return;
         }
 
+        // Check if we've finished all notes
         if (self.current_note >= self.num_notes) {
-            // Finished all notes - ensure speaker is stopped
-            self.stop();
-            stopTone(); // Double-check stop
+            // Finished - clean up state
+            self.is_playing = false;
+            stopTone();
             return;
         }
 
+        // Get current note
         const note = self.notes[self.current_note];
+
+        // Increment frame counter
         self.frame_counter += 1;
 
+        // Check if note duration has been reached
         if (self.frame_counter >= note.duration) {
             // Move to next note
             self.current_note += 1;
             self.frame_counter = 0;
 
+            // Check if there are more notes
             if (self.current_note < self.num_notes) {
-                // Start next note
+                // Play next note
                 const next_note = self.notes[self.current_note];
                 playTone(next_note.freq);
             } else {
-                // Finished - stop sound immediately
+                // Finished all notes - stop cleanly
                 self.is_playing = false;
                 stopTone();
             }

@@ -415,29 +415,36 @@ pub fn main() uefi.Status {
     const fb_size = stride * screen_h;
     const fb: [*]u32 = @ptrFromInt(@as(usize, @truncate(gop.mode.frame_buffer_base)));
 
-    // Allocate backbuffer (render everything here first, then copy to fb once)
-    const backbuffer_alloc = boot_services.allocatePool(uefi.tables.MemoryType.loader_data, fb_size * @sizeOf(u32)) catch {
+    // Allocate background buffer - holds static scene (terrain + tileset)
+    const background_alloc = boot_services.allocatePool(uefi.tables.MemoryType.loader_data, fb_size * @sizeOf(u32)) catch {
         return .out_of_resources;
     };
-    const backbuffer: [*]u32 = @ptrCast(@alignCast(backbuffer_alloc));
+    const background_buffer: [*]u32 = @ptrCast(@alignCast(background_alloc));
 
-    // Clear backbuffer to black
+    // Allocate foreground buffer - where we composite everything before sending to GPU
+    const foreground_alloc = boot_services.allocatePool(uefi.tables.MemoryType.loader_data, fb_size * @sizeOf(u32)) catch {
+        return .out_of_resources;
+    };
+    const foreground_buffer: [*]u32 = @ptrCast(@alignCast(foreground_alloc));
+
+    // Get tileset data for later use
+    const ppm_data: [*]const u8 = @ptrCast(tileset_ppm.ptr + PPM_HEADER_SIZE);
+    const tilesheet_stride = TILESHEET_W * 3;
+
+    // Clear background buffer to black
     const bg_color: u32 = 0xFF000000;
     var py: u32 = 0;
     while (py < screen_h) : (py += 1) {
         var px: u32 = 0;
         while (px < screen_w) : (px += 1) {
-            backbuffer[py * stride + px] = bg_color;
+            background_buffer[py * stride + px] = bg_color;
         }
     }
 
-    // Generate terrain to backbuffer
-    generateTerrain(backbuffer, stride, screen_w, screen_h);
+    // Generate terrain to background buffer
+    generateTerrain(background_buffer, stride, screen_w, screen_h);
 
-    // Draw tileset preview (1:1 scale, 32x32 pixels per tile)
-    // 8x4 tiles = 256x128 pixels total
-    const ppm_data: [*]const u8 = @ptrCast(tileset_ppm.ptr + PPM_HEADER_SIZE);
-    const tilesheet_stride = TILESHEET_W * 3;
+    // Draw tileset preview to background buffer
     var tile_y: u32 = 0;
     while (tile_y < TILES_PER_COL) : (tile_y += 1) {
         var tile_x: u32 = 0;
@@ -447,7 +454,7 @@ pub fn main() uefi.Status {
             const tile_row_y = tile_y * TILE_SIZE;
             const tile_col_x = tile_x * TILE_SIZE * 3;
 
-            // Draw full 32x32 tile
+            // Draw full tile to background buffer
             var ppy: u32 = 0;
             while (ppy < TILE_SIZE) : (ppy += 1) {
                 var ppx: u32 = 0;
@@ -458,14 +465,11 @@ pub fn main() uefi.Status {
                     const r = ppm_data[pixel_offset];
                     const g = ppm_data[pixel_offset + 1];
                     const b = ppm_data[pixel_offset + 2];
-                    backbuffer[(preview_y + ppy) * stride + (preview_x + ppx)] = rgbToBgra(r, g, b);
+                    background_buffer[(preview_y + ppy) * stride + (preview_x + ppx)] = rgbToBgra(r, g, b);
                 }
             }
         }
     }
-
-    // Copy static scene to framebuffer once
-    simdCopy(fb, backbuffer, fb_size);
 
     // Setup mouse
     var mouse: ?*uefi.protocol.SimplePointer = null;
@@ -534,13 +538,36 @@ pub fn main() uefi.Status {
                     sfxRegenerate();
                     const new_seed = @as(u32, @intCast(cursor_x)) *% 12345 +% @as(u32, @intCast(cursor_y)) *% 67890 +% rng_seed;
                     rng_seed = new_seed;
-                    // Generate to fb, then copy to backbuffer
-                    generateTerrain(fb, stride, screen_w, screen_h);
-                    simdCopy(backbuffer, fb, fb_size);
+                    // Regenerate terrain directly to background buffer
+                    generateTerrain(background_buffer, stride, screen_w, screen_h);
+                    // Redraw tileset preview to background buffer
+                    var tile_y2: u32 = 0;
+                    while (tile_y2 < TILES_PER_COL) : (tile_y2 += 1) {
+                        var tile_x2: u32 = 0;
+                        while (tile_x2 < TILES_PER_ROW) : (tile_x2 += 1) {
+                            const preview_x = TILESET_DISPLAY_X + tile_x2 * TILE_SIZE;
+                            const preview_y = TILESET_DISPLAY_Y + tile_y2 * TILE_SIZE;
+                            const tile_row_y = tile_y2 * TILE_SIZE;
+                            const tile_col_x = tile_x2 * TILE_SIZE * 3;
+                            var ppy: u32 = 0;
+                            while (ppy < TILE_SIZE) : (ppy += 1) {
+                                var ppx: u32 = 0;
+                                while (ppx < TILE_SIZE) : (ppx += 1) {
+                                    const src_y = tile_row_y + ppy;
+                                    const src_x = tile_col_x + ppx * 3;
+                                    const pixel_offset = src_y * tilesheet_stride + src_x;
+                                    const r = ppm_data[pixel_offset];
+                                    const g = ppm_data[pixel_offset + 1];
+                                    const b = ppm_data[pixel_offset + 2];
+                                    background_buffer[(preview_y + ppy) * stride + (preview_x + ppx)] = rgbToBgra(r, g, b);
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Left button: spawn random tile at grid position
-                // Also update the backbuffer so the change persists
+                // Also update the background buffer so the change persists
                 if (state.left_button and !inPalette(cursor_x, cursor_y)) {
                     // Play sound FIRST (immediately), then do the work
                     sfxPlaceTile();
@@ -558,39 +585,48 @@ pub fn main() uefi.Status {
                     const tile_sheet_y = random_tile / TILES_PER_ROW;
                     const screen_x = grid_col * TILE_SIZE;
                     const screen_y = grid_row * TILE_SIZE;
-                    // Draw to backbuffer (permanent)
-                    drawTile(backbuffer, stride, tile_sheet_x, tile_sheet_y, screen_x, screen_y);
+                    // Draw to background buffer (permanent)
+                    drawTile(background_buffer, stride, tile_sheet_x, tile_sheet_y, screen_x, screen_y);
                 }
             } else |_| {}
         }
 
-        // Restore backbuffer (static scene with terrain and placed tiles)
-        simdCopy(fb, backbuffer, fb_size);
+        // TRIPLE BUFFERING RENDER PIPELINE:
+        // 1. Copy background → foreground (static scene)
+        // 2. Draw UI elements to foreground
+        // 3. Copy foreground → GPU framebuffer (single blit)
 
-        // Update audio (process sound queue)
+        // Step 1: Copy static background to foreground buffer
+        simdCopy(foreground_buffer, background_buffer, fb_size);
+
+        // Step 2: Update audio (process sound queue) - do audio work before UI
         audio.audio_player.update();
 
-        // Draw debug info with labels (dynamic overlay)
+        // Step 3: Draw UI elements to foreground buffer
+        // Debug info with labels
         // Format: X: 000 Y: 000 DX: 000 DY: 000
-        drawString(fb, stride, screen_w - 300, 5, "X:", 0xFFFFFFFF);
-        drawNumber3(fb, stride, screen_w - 285, 5, cursor_x, 0xFFFFFFFF);
+        drawString(foreground_buffer, stride, screen_w - 300, 5, "X:", 0xFFFFFFFF);
+        drawNumber3(foreground_buffer, stride, screen_w - 285, 5, cursor_x, 0xFFFFFFFF);
 
-        drawString(fb, stride, screen_w - 250, 5, "Y:", 0xFFFFFFFF);
-        drawNumber3(fb, stride, screen_w - 235, 5, cursor_y, 0xFFFFFFFF);
+        drawString(foreground_buffer, stride, screen_w - 250, 5, "Y:", 0xFFFFFFFF);
+        drawNumber3(foreground_buffer, stride, screen_w - 235, 5, cursor_y, 0xFFFFFFFF);
 
-        drawString(fb, stride, screen_w - 200, 5, "DX:", 0xFFFFFFFF);
-        drawNumber3(fb, stride, screen_w - 180, 5, last_dx, 0xFFFFFFFF);
+        drawString(foreground_buffer, stride, screen_w - 200, 5, "DX:", 0xFFFFFFFF);
+        drawNumber3(foreground_buffer, stride, screen_w - 180, 5, last_dx, 0xFFFFFFFF);
 
-        drawString(fb, stride, screen_w - 140, 5, "DY:", 0xFFFFFFFF);
-        drawNumber3(fb, stride, screen_w - 120, 5, last_dy, 0xFFFFFFFF);
+        drawString(foreground_buffer, stride, screen_w - 140, 5, "DY:", 0xFFFFFFFF);
+        drawNumber3(foreground_buffer, stride, screen_w - 120, 5, last_dy, 0xFFFFFFFF);
 
         // Draw cursor as sprite (use tile 67 = 0x43 as cursor, centered on position)
-        // This is the only dynamic sprite drawn each frame
         const CURSOR_TILE: u32 = 67;
-        drawSprite(fb, stride, CURSOR_TILE, cursor_x - 8, cursor_y - 8);
+        drawSprite(foreground_buffer, stride, CURSOR_TILE, cursor_x - 8, cursor_y - 8);
+
+        // Step 4: Single blit of complete frame to GPU memory (no flicker!)
+        simdCopy(fb, foreground_buffer, fb_size);
     }
 
-    _ = boot_services.freePool(@ptrCast(@alignCast(backbuffer))) catch {};
+    _ = boot_services.freePool(@ptrCast(@alignCast(background_buffer))) catch {};
+    _ = boot_services.freePool(@ptrCast(@alignCast(foreground_buffer))) catch {};
     return .success;
 }
 
