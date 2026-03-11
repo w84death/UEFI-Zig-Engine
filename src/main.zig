@@ -85,6 +85,15 @@ fn randomU8(max: u8) u8 {
     return @intCast(random() % @as(u32, max));
 }
 
+// Import audio module for non-blocking PC speaker playback
+const audio = @import("audio.zig");
+
+// Re-export sound effect functions for convenience
+const sfxClick = audio.sfxClick;
+const sfxPlaceTile = audio.sfxPlaceTile;
+const sfxRegenerate = audio.sfxRegenerate;
+const sfxError = audio.sfxError;
+
 // Font data from font.asm - 59 characters (ASCII 32-90), 8x8 pixels
 // Each character is 8 bytes, one byte per row
 // Bit 7 = leftmost pixel, Bit 0 = rightmost pixel
@@ -526,6 +535,8 @@ pub fn main() uefi.Status {
                     // Generate to fb, then copy to backbuffer
                     generateTerrain(fb, stride, screen_w, screen_h);
                     simdCopy(backbuffer, fb, fb_size);
+                    // Play regeneration sound
+                    sfxRegenerate();
                 }
 
                 // Left button: spawn random tile at grid position
@@ -547,12 +558,17 @@ pub fn main() uefi.Status {
                     const screen_y = grid_row * TILE_SIZE;
                     // Draw to backbuffer (permanent)
                     drawTile(backbuffer, stride, tile_sheet_x, tile_sheet_y, screen_x, screen_y);
+                    // Play tile placement sound
+                    sfxPlaceTile();
                 }
             } else |_| {}
         }
 
         // Restore backbuffer (static scene with terrain and placed tiles)
         simdCopy(fb, backbuffer, fb_size);
+
+        // Update audio (process sound queue)
+        audio.audio_player.update();
 
         // Draw debug info with labels (dynamic overlay)
         // Format: X: 000 Y: 000 DX: 000 DY: 000

@@ -48,7 +48,7 @@ if [[ "$USB_DEVICE" == *"mmc"* ]]; then
 fi
 
 echo "Step 4: Formatting as FAT32..."
-mkfs.fat -F 32 -n "UEFI-BOOT" "$PARTITION"
+mkfs.fat -F 32 -n "P1X" "$PARTITION"
 
 echo "Step 5: Mounting and copying files..."
 MOUNT_POINT="/tmp/uefi-usb-$$"
