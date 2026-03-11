@@ -530,18 +530,20 @@ pub fn main() uefi.Status {
 
                 // Right button: regenerate terrain with new seed
                 if (state.right_button) {
+                    // Play sound FIRST (immediately), then do the work
+                    sfxRegenerate();
                     const new_seed = @as(u32, @intCast(cursor_x)) *% 12345 +% @as(u32, @intCast(cursor_y)) *% 67890 +% rng_seed;
                     rng_seed = new_seed;
                     // Generate to fb, then copy to backbuffer
                     generateTerrain(fb, stride, screen_w, screen_h);
                     simdCopy(backbuffer, fb, fb_size);
-                    // Play regeneration sound
-                    sfxRegenerate();
                 }
 
                 // Left button: spawn random tile at grid position
                 // Also update the backbuffer so the change persists
                 if (state.left_button and !inPalette(cursor_x, cursor_y)) {
+                    // Play sound FIRST (immediately), then do the work
+                    sfxPlaceTile();
                     const grid_col = @as(u32, @intCast(cursor_x)) / TILE_SIZE;
                     const grid_row = @as(u32, @intCast(cursor_y)) / TILE_SIZE;
                     const map_cols = screen_w / TILE_SIZE;
@@ -558,8 +560,6 @@ pub fn main() uefi.Status {
                     const screen_y = grid_row * TILE_SIZE;
                     // Draw to backbuffer (permanent)
                     drawTile(backbuffer, stride, tile_sheet_x, tile_sheet_y, screen_x, screen_y);
-                    // Play tile placement sound
-                    sfxPlaceTile();
                 }
             } else |_| {}
         }

@@ -125,10 +125,16 @@ pub const AudioPlayer = struct {
 
     // Update called every frame (60fps assumed)
     pub fn update(self: *AudioPlayer) void {
-        if (!self.is_playing) return;
+        if (!self.is_playing) {
+            // Make sure speaker is off when not playing
+            stopTone();
+            return;
+        }
+
         if (self.current_note >= self.num_notes) {
-            // Finished all notes
+            // Finished all notes - ensure speaker is stopped
             self.stop();
+            stopTone(); // Double-check stop
             return;
         }
 
@@ -142,10 +148,12 @@ pub const AudioPlayer = struct {
 
             if (self.current_note < self.num_notes) {
                 // Start next note
-                playTone(self.notes[self.current_note].freq);
+                const next_note = self.notes[self.current_note];
+                playTone(next_note.freq);
             } else {
-                // Finished
-                self.stop();
+                // Finished - stop sound immediately
+                self.is_playing = false;
+                stopTone();
             }
         }
     }
