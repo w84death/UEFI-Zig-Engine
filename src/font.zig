@@ -100,6 +100,28 @@ pub fn drawString(fb: [*]u32, fb_stride: u32, x: u32, y: u32, str: []const u8, c
     }
 }
 
+// Draw a number with any number of digits (right-aligned)
+pub fn drawNumber(fb: [*]u32, fb_stride: u32, x: u32, y: u32, num: u32, color: u32) void {
+    if (num == 0) {
+        drawChar(fb, fb_stride, x, y, '0', color);
+        return;
+    }
+
+    var n = num;
+    var digit_count: u32 = 0;
+    var temp = n;
+    while (temp > 0) : (temp /= 10) {
+        digit_count += 1;
+    }
+
+    var dx: u32 = (digit_count - 1) * 9;
+    while (n > 0) : (n /= 10) {
+        const digit: u8 = @intCast(n % 10);
+        drawChar(fb, fb_stride, x + dx, y, '0' + digit, color);
+        if (dx >= 9) dx -= 9;
+    }
+}
+
 // Draw a number with 3 digits (padded with zeros)
 pub fn drawNumber3(fb: [*]u32, fb_stride: u32, x: u32, y: u32, num: i32, color: u32) void {
     var n: i32 = if (num < 0) -num else num;

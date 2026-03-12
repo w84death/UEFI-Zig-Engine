@@ -77,7 +77,7 @@ pub fn drawDebugInfo(
 
     y += LINE_HEIGHT;
     font.drawString(fb, fb_stride, content_x, y, "GEN:", text_color);
-    font.drawNumber3(fb, fb_stride, content_x + 40, y, @intCast(generation), text_color);
+    font.drawNumber(fb, fb_stride, content_x + 75, y, generation, text_color);
 
     // Controls help at bottom
     y += LINE_HEIGHT + 4;
@@ -94,12 +94,23 @@ pub fn drawCivilizationCollapsed(
     screen_h: u32,
     generation: u32,
 ) void {
-    const win_w: u32 = 320;
+    const title_color = 0xFFFF0000; // Red title
+    const text_color = 0xFFFFFFFF;
+
+    // Calculate window size based on generation number length
+    // "Lasted " (7 chars) + number + " generations" (11 chars) = ~18-22 chars minimum
+    const gen_digits = if (generation == 0) 1 else blk: {
+        var n = generation;
+        var count: u32 = 0;
+        while (n > 0) : (n /= 10) count += 1;
+        break :blk count;
+    };
+    const num_display_width = gen_digits * 9; // 9 pixels per character
+    const min_content_width = 7 * 9 + num_display_width + 11 * 9; // "Lasted " + number + " generations"
+    const win_w = @min(480, @max(320, min_content_width + 32)); // Min 320, max 480, with padding
     const win_h: u32 = 80;
     const win_x = (screen_w - win_w) / 2;
     const win_y = (screen_h - win_h) / 2;
-    const title_color = 0xFFFF0000; // Red title
-    const text_color = 0xFFFFFFFF;
 
     // Draw window frame with red title
     window.drawWindow(fb, fb_stride, .{
@@ -120,8 +131,10 @@ pub fn drawCivilizationCollapsed(
     // Duration info on next line
     const y2 = content_y + LINE_HEIGHT + 4;
     font.drawString(fb, fb_stride, content_x, y2, "Lasted ", text_color);
-    font.drawNumber3(fb, fb_stride, content_x + 55, y2, @intCast(generation), text_color);
-    font.drawString(fb, fb_stride, content_x + 95, y2, "generations", text_color);
+    // drawNumber right-aligns, so position at right edge of number
+    const num_x = content_x + 55 + num_display_width - 9;
+    font.drawNumber(fb, fb_stride, num_x, y2, generation, text_color);
+    font.drawString(fb, fb_stride, content_x + 60 + num_display_width, y2, "generations", text_color);
 
     // Press key hint
     const y3 = y2 + LINE_HEIGHT + 4;
