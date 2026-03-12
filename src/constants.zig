@@ -66,7 +66,7 @@ pub const TILESET_DISPLAY_X: u32 = 100;
 pub const PALETTE_DISPLAY_Y: u32 = 10;
 
 // Cursor tile
-pub const CURSOR_TILE: u32 = 67;
+pub const CURSOR_TILE: u32 = 15;
 
 // Font constants
 pub const FONT_FIRST_CHAR: u8 = 32;

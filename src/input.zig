@@ -103,11 +103,3 @@ pub fn getPaletteColorIndex(x: i32, y: i32) usize {
     const row = @as(u32, @intCast(y - constants.PALETTE_Y)) / constants.PALETTE_CELL_SIZE;
     return @as(usize, @intCast(row * constants.PALETTE_COLS + col));
 }
-
-/// Convert screen coordinates to grid position
-pub fn screenToGrid(screen_x: i32, screen_y: i32) struct { col: u32, row: u32 } {
-    return .{
-        .col = @as(u32, @intCast(screen_x)) / constants.TILE_SIZE,
-        .row = @as(u32, @intCast(screen_y)) / constants.TILE_SIZE,
-    };
-}

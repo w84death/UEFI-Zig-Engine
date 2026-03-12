@@ -5,7 +5,8 @@
 const constants = @import("constants.zig");
 const terrain = @import("terrain.zig");
 const graphics = @import("graphics.zig");
-const rng = @import("rng.zig");
+const utils = @import("utils.zig");
+const config = @import("config.zig");
 
 // Living cell storage - bit packed for efficiency
 // Each cell needs 1 bit: 0 = dead, 1 = alive
@@ -16,21 +17,17 @@ pub var cell_buffer: [MAX_CELLS]u8 = undefined;
 // Stability tracking: counts how many generations a cell has been in the same state
 // Used to detect stalled patterns like 2x2 blocks
 pub var stability_counter: [MAX_CELLS]u8 = undefined;
-const STABILITY_THRESHOLD: u8 = 10; // Sacrifice after 10 generations of stability
+const STABILITY_THRESHOLD: u8 = 14; // Sacrifice after 10 generations of stability
 
 // Soil tile range (tiles 0-6 are valid for life, 7-10 are rocky/deadly)
 const MIN_SOIL_TILE: u8 = 0;
 const MAX_SOIL_TILE: u8 = 6;
 
 /// Living cell sprites
-/// Young cells (newly born or unstable) use sprite 19
-/// Mature cells (stable) use sprite 20
-pub const YOUNG_CELL_TILE: u32 = 19;
-pub const MATURE_CELL_TILE: u32 = 20;
-/// Threshold for cell maturity - cells with stability < this are "young"
-pub const YOUNG_THRESHOLD: u8 = 5;
+pub const YOUNG_CELL_TILE: u32 = 11;
+pub const MATURE_CELL_TILE: u32 = 12;
+pub const YOUNG_THRESHOLD: u8 = 7;
 
-/// Chaos mode: terrain-dependent probabilities for cell survival
 pub var chaos_mode: bool = true; // Enabled by default
 
 /// Generation counter
@@ -78,7 +75,7 @@ pub fn init(map_cols: u32, map_rows: u32) void {
             const terrain_tile = terrain.getTile(map_idx);
 
             // Only spawn on soil with 15% probability
-            if (isSoil(terrain_tile) and rng.randomU8(100) < 15) {
+            if (isSoil(terrain_tile) and utils.rngRandomU8(100) < config.INITIAL_SPAWN_CHANCE) {
                 cell_buffer[map_idx] = 1;
             }
         }
@@ -197,13 +194,13 @@ pub fn update(map_cols: u32, map_rows: u32) void {
                 if (!was_alive and will_be_alive) {
                     // GoL says BIRTH (0 -> 1)
                     // Apply birth probability
-                    if (rng.randomU8(100) >= birth_chance) {
+                    if (utils.rngRandomU8(100) >= birth_chance) {
                         next_gen[map_idx] = 0; // Birth failed, stay dead
                     }
                 } else if (was_alive and !will_be_alive) {
                     // GoL says DEATH (1 -> 0)
                     // Apply death probability
-                    if (rng.randomU8(100) >= death_chance) {
+                    if (utils.rngRandomU8(100) >= death_chance) {
                         next_gen[map_idx] = 1; // Death failed, stay alive
                     }
                 }
@@ -233,9 +230,9 @@ pub fn update(map_cols: u32, map_rows: u32) void {
             }
 
             // Check for sacrifice condition: alive and stable for threshold
-            if (is_alive_now and stability_counter[map_idx] >= STABILITY_THRESHOLD) {
+            if (is_alive_now and stability_counter[map_idx] >= config.STABILITY_THRESHOLD) {
                 // 10% chance to sacrifice and spawn nearby
-                if (rng.randomU8(100) < 10) {
+                if (utils.rngRandomU8(100) < 10) {
                     // Sacrifice this cell (it dies)
                     next_gen[map_idx] = 0;
 
@@ -246,7 +243,7 @@ pub fn update(map_cols: u32, map_rows: u32) void {
                     // Try up to 3 times to find a valid neighbor
                     var attempts: u8 = 0;
                     while (attempts < 3) : (attempts += 1) {
-                        const dir = rng.randomU8(8);
+                        const dir = utils.rngRandomU8(8);
                         const nr = @as(i32, @intCast(sacrifice_r)) + dr[dir];
                         const nc = @as(i32, @intCast(sacrifice_c)) + dc[dir];
 

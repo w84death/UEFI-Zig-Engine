@@ -1,7 +1,7 @@
 // Terrain generation and map management
 
 const constants = @import("constants.zig");
-const rng = @import("rng.zig");
+const utils = @import("utils.zig");
 const graphics = @import("graphics.zig");
 
 // Terrain map storage
@@ -22,25 +22,25 @@ pub fn generateTerrain(fb: [*]u32, fb_stride: u32, screen_w: u32, screen_h: u32)
 
             if (col == 0 and row == 0) {
                 // First tile (0,0): random from first 10 tiles
-                tile = rng.randomU8(10);
+                tile = utils.rngRandomU8(10);
             } else if (col == 0) {
                 // First column (not first row): check top neighbor only
                 const top_tile = terrain_map[map_idx - map_cols];
-                const rule_idx = rng.randomU8(8);
+                const rule_idx = utils.rngRandomU8(8);
                 tile = constants.terrain_rules[top_tile][rule_idx];
             } else if (row == 0) {
                 // First row (not first column): check left neighbor only
                 const left_tile = terrain_map[map_idx - 1];
-                const rule_idx = rng.randomU8(8);
+                const rule_idx = utils.rngRandomU8(8);
                 tile = constants.terrain_rules[left_tile][rule_idx];
             } else {
                 // Other tiles: randomly choose between left and top neighbor rules
                 const left_tile = terrain_map[map_idx - 1];
                 const top_tile = terrain_map[map_idx - map_cols];
-                const rule_idx = rng.randomU8(8);
+                const rule_idx = utils.rngRandomU8(8);
 
                 // 50/50 chance to use left or top tile rules
-                if (rng.randomU8(2) == 0) {
+                if (utils.rngRandomU8(2) == 0) {
                     tile = constants.terrain_rules[left_tile][rule_idx];
                 } else {
                     tile = constants.terrain_rules[top_tile][rule_idx];

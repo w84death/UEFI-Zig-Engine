@@ -1,7 +1,7 @@
 const std = @import("std");
 const uefi = std.os.uefi;
 
-// MSVC runtime symbols for 32-bit UEFI (must be exported from root)
+// MSVC runtime symbols for 32-bit UEFI
 export fn _aullrem(a: u64, b: u64) u64 {
     return @rem(a, b);
 }
@@ -18,19 +18,16 @@ export fn __fltused() void {}
 
 // Import modules
 const constants = @import("constants.zig");
-const rng = @import("rng.zig");
-const font = @import("font.zig");
+const utils = @import("utils.zig");
+const config = @import("config.zig");
+const app = @import("app.zig");
 const graphics = @import("graphics.zig");
 const terrain = @import("terrain.zig");
 const input = @import("input.zig");
 const game_of_life = @import("game_of_life.zig");
 const audio = @import("audio.zig");
-
-// Re-export audio functions for convenience
-const sfxClick = audio.sfxClick;
-const sfxPlaceTile = audio.sfxPlaceTile;
-const sfxRegenerate = audio.sfxRegenerate;
-const sfxError = audio.sfxError;
+const ui = @import("ui.zig");
+const font = @import("font.zig");
 
 // UEFI Entry Point
 export fn _EfiMain(handle: uefi.Handle, st: *uefi.tables.SystemTable) usize {
@@ -45,320 +42,149 @@ pub fn main() uefi.Status {
     const con_in = st.con_in orelse return .success;
 
     // Initialize graphics
-    var gop: *uefi.protocol.GraphicsOutput = undefined;
-    const result = boot_services.locateProtocol(uefi.protocol.GraphicsOutput, null) catch |err| switch (err) {
+    const gfx = app.initGraphics(boot_services) catch |err| switch (err) {
+        error.OutOfResources => return .out_of_resources,
+        error.Aborted => return .aborted,
         error.InvalidParameter => return .invalid_parameter,
-        error.Unexpected => return .aborted,
     };
-    gop = result orelse return .aborted;
-
-    // Select graphics mode (prefer 1920x1200, then 1920x1080, then any 1920 width)
-    var chosen_mode: u32 = gop.mode.mode;
-    var mode_idx: u32 = 0;
-    var found_1080: ?u32 = null;
-    var found_1920: ?u32 = null;
-
-    while (mode_idx < gop.mode.max_mode) : (mode_idx += 1) {
-        const info = gop.queryMode(mode_idx) catch continue;
-        // Prefer 1920x1200 (WUXGA)
-        if (info.horizontal_resolution == 1920 and info.vertical_resolution == 1200) {
-            chosen_mode = mode_idx;
-            break;
-        }
-        // Remember 1920x1080 as fallback
-        if (found_1080 == null and info.horizontal_resolution == 1920 and info.vertical_resolution == 1080) {
-            found_1080 = mode_idx;
-        }
-        // Remember any 1920 width mode as last resort
-        if (found_1920 == null and info.horizontal_resolution == 1920) {
-            found_1920 = mode_idx;
-        }
-    }
-
-    // If we didn't find 1920x1200, use 1920x1080, or any 1920 width
-    if (chosen_mode == gop.mode.mode) {
-        if (found_1080) |mode| {
-            chosen_mode = mode;
-        } else if (found_1920) |mode| {
-            chosen_mode = mode;
-        }
-    }
-
-    if (chosen_mode != gop.mode.mode) {
-        gop.setMode(chosen_mode) catch {};
-    }
-
-    const screen_w = gop.mode.info.horizontal_resolution;
-    const screen_h = gop.mode.info.vertical_resolution;
-    const stride = gop.mode.info.pixels_per_scan_line;
-    const fb_size = stride * screen_h;
-    const fb: [*]u32 = @ptrFromInt(@as(usize, @truncate(gop.mode.frame_buffer_base)));
 
     // Allocate buffers
-    const background_alloc = boot_services.allocatePool(uefi.tables.MemoryType.loader_data, fb_size * @sizeOf(u32)) catch {
+    const buffers = app.allocateBuffers(boot_services, gfx.fb_size) catch {
         return .out_of_resources;
     };
-    const background_buffer: [*]u32 = @ptrCast(@alignCast(background_alloc));
-
-    const foreground_alloc = boot_services.allocatePool(uefi.tables.MemoryType.loader_data, fb_size * @sizeOf(u32)) catch {
-        return .out_of_resources;
-    };
-    const foreground_buffer: [*]u32 = @ptrCast(@alignCast(foreground_alloc));
 
     // Initialize input
     const mouse = input.initMouse(boot_services);
-    var mouse_state = input.MouseState.init(screen_w, screen_h, mouse != null);
+    var mouse_state = input.MouseState.init(gfx.screen_w, gfx.screen_h, mouse != null);
 
-    // Create timer event for ~30fps updates (33ms = 330000 * 100ns units)
-    var timer_event: uefi.Event = undefined;
-    const timer_type = uefi.EventType{ .timer = true };
-    const notify_opts = uefi.tables.BootServices.NotifyOpts{
-        .tpl = .application,
-        .function = null,
+    // Setup events
+    const events = app.setupEvents(boot_services, con_in, mouse, mouse_state.available) catch {
+        return .aborted;
     };
-    const timer_result = boot_services.createEvent(timer_type, notify_opts);
-    if (timer_result) |evt| {
-        timer_event = evt;
-        // Set timer to trigger every 33ms (approx 30fps) - in 100ns units
-        _ = boot_services.setTimer(timer_event, .periodic, 330000) catch {};
-    } else |_| {
-        // Fallback: use keyboard event (updates only on input)
-        timer_event = con_in.wait_for_key;
-    }
 
-    // Setup event loop (max 3 events: key, timer, mouse)
-    var events: [3]uefi.Event = undefined;
-    var num_events: usize = 2;
-    events[0] = con_in.wait_for_key;
-    events[1] = timer_event;
-
-    if (mouse_state.available) {
-        if (input.getMouseEvent(mouse)) |evt| {
-            events[2] = evt;
-            num_events = 3;
-        }
-    }
-
-    // Initial render setup
-    graphics.clearScreen(background_buffer, stride, screen_w, screen_h, 0xFF000000);
-    terrain.generateTerrain(background_buffer, stride, screen_w, screen_h);
-    // Note: tileset preview no longer drawn by default
+    // Initial render
+    graphics.clearScreen(buffers.background, gfx.stride, gfx.screen_w, gfx.screen_h, 0xFF000000);
+    terrain.generateTerrain(buffers.background, gfx.stride, gfx.screen_w, gfx.screen_h);
 
     // Initialize Game of Life
-    const map_cols = screen_w / constants.TILE_SIZE;
-    const map_rows = screen_h / constants.TILE_SIZE;
+    const map_cols = gfx.screen_w / constants.TILE_SIZE;
+    const map_rows = gfx.screen_h / constants.TILE_SIZE;
     game_of_life.init(map_cols, map_rows);
 
     // Main loop
     var running = true;
     var gol_frame_counter: u32 = 0;
-    var gol_update_interval: u32 = 30; // Update Game of Life every N frames (adjustable)
-    const gol_interval_min: u32 = 1; // Maximum speed (5 frames)
-    const gol_interval_max: u32 = 120; // Minimum speed (120 frames = 2 seconds)
-    var gol_running = true; // Toggle Game of Life simulation
-    var show_tileset = false; // Toggle tileset display with 'T' key
+    var gol_running = true;
+
     while (running) {
-        const wait_result = boot_services.waitForEvent(events[0..num_events]) catch continue;
+        const wait_result = boot_services.waitForEvent(events.events[0..events.num_events]) catch continue;
         const index = wait_result[1];
 
-        // Handle timer event (index 1) - always render on timer tick
-        if (index == 1) {
-            // Timer fired - this is our signal to render a new frame
-        }
-
-        // Handle keyboard (index 0)
+        // Handle keyboard input
         if (index == 0) {
             if (con_in.readKeyStroke()) |key| {
                 const c = key.unicode_char;
-                if (c == ' ') {
-                    // Spacebar toggles Game of Life simulation
-                    gol_running = !gol_running;
-                    sfxClick();
-                } else if (c == 'c' or c == 'C') {
-                    // 'C' key clears all living cells
-                    game_of_life.clear();
-                    sfxRegenerate();
-                } else if (c == 'r' or c == 'R') {
-                    // 'R' key reinitializes with random cells
-                    game_of_life.init(map_cols, map_rows);
-                    sfxRegenerate();
-                } else if (c == 't' or c == 'T') {
-                    // 'T' key toggles tileset display
-                    show_tileset = !show_tileset;
-                    sfxClick();
-                } else if (c == 'h' or c == 'H') {
-                    // 'H' key toggles chaos mode (H for "chaos/Havok")
-                    game_of_life.toggleChaosMode();
-                    sfxClick();
-                } else if (c == '+' or c == '=') {
-                    // '+' key speeds up (decreases interval)
-                    if (gol_update_interval > gol_interval_min) {
-                        gol_update_interval -= 5;
-                        if (gol_update_interval < gol_interval_min) gol_update_interval = gol_interval_min;
-                        sfxClick();
-                    } else {
-                        sfxError();
-                    }
-                } else if (c == '-') {
-                    // '-' key slows down (increases interval)
-                    if (gol_update_interval < gol_interval_max) {
-                        gol_update_interval += 5;
-                        if (gol_update_interval > gol_interval_max) gol_update_interval = gol_interval_max;
-                        sfxClick();
-                    } else {
-                        sfxError();
-                    }
-                } else if (c == 'q' or c == 'Q') {
-                    // 'Q' key quits
-                    running = false;
+                switch (c) {
+                    ' ' => {
+                        gol_running = !gol_running;
+                        audio.sfxClick();
+                    },
+                    'c', 'C' => {
+                        game_of_life.clear();
+                        audio.sfxRegenerate();
+                    },
+                    'r', 'R' => {
+                        game_of_life.init(map_cols, map_rows);
+                        audio.sfxRegenerate();
+                    },
+                    't', 'T' => {
+                        config.show_tileset = !config.show_tileset;
+                        audio.sfxClick();
+                    },
+                    'h', 'H' => {
+                        game_of_life.toggleChaosMode();
+                        audio.sfxClick();
+                    },
+                    '+', '=' => adjustSpeed(-1),
+                    '-' => adjustSpeed(1),
+                    'q', 'Q' => running = false,
+                    else => {},
                 }
             } else |_| {}
         }
 
-        // Handle mouse (index 2 if available)
+        // Handle mouse input
         if (mouse_state.available and index == 2) {
-            input.updateMouse(&mouse_state, mouse, screen_w, screen_h);
+            input.updateMouse(&mouse_state, mouse, gfx.screen_w, gfx.screen_h);
 
-            // Right button: regenerate terrain and reset Game of Life
+            // Right button: regenerate terrain
             if (mouse_state.right_button) {
-                sfxRegenerate();
-                rng.setSeed(rng.generateSeedFromPos(mouse_state.x, mouse_state.y));
-                terrain.generateTerrain(background_buffer, stride, screen_w, screen_h);
-                game_of_life.init(map_cols, map_rows); // Reset Game of Life on terrain regen
+                audio.sfxRegenerate();
+                utils.rngSetSeed(utils.generateSeedFromPos(mouse_state.x, mouse_state.y));
+                terrain.generateTerrain(buffers.background, gfx.stride, gfx.screen_w, gfx.screen_h);
+                game_of_life.init(map_cols, map_rows);
             }
 
-            // Left button: spawn new life (only on soil tiles 0-6)
+            // Left button: spawn cell
             if (mouse_state.left_button and !input.inPalette(mouse_state.x, mouse_state.y)) {
-                const grid = input.screenToGrid(mouse_state.x, mouse_state.y);
-                // Only spawn if cell is not already alive
+                const grid = utils.screenToGrid(mouse_state.x, mouse_state.y, constants.TILE_SIZE);
                 if (!game_of_life.isAlive(grid.col, grid.row, map_cols)) {
                     if (game_of_life.spawnCell(grid.col, grid.row, map_cols)) {
-                        sfxClick(); // Successfully spawned on soil
+                        audio.sfxClick();
                     } else {
-                        sfxError(); // Cannot spawn (not on soil)
+                        audio.sfxError();
                     }
                 }
             }
 
-            // Scroll wheel: adjust simulation speed
+            // Scroll wheel: adjust speed
             const scroll = input.getScrollAndReset(&mouse_state);
-            if (scroll > 0) {
-                // Scroll up: speed up (decrease interval)
-                if (gol_update_interval > gol_interval_min) {
-                    gol_update_interval -= 5;
-                    if (gol_update_interval < gol_interval_min) gol_update_interval = gol_interval_min;
-                    sfxClick();
-                }
-            } else if (scroll < 0) {
-                // Scroll down: slow down (increase interval)
-                if (gol_update_interval < gol_interval_max) {
-                    gol_update_interval += 5;
-                    if (gol_update_interval > gol_interval_max) gol_update_interval = gol_interval_max;
-                    sfxClick();
-                }
-            }
+            if (scroll != 0) adjustSpeed(if (scroll > 0) -1 else 1);
         }
 
-        // Update Game of Life simulation (if civilization is still alive)
+        // Update Game of Life
         if (gol_running and !game_of_life.isDead()) {
             gol_frame_counter += 1;
-            if (gol_frame_counter >= gol_update_interval) {
+            if (gol_frame_counter >= config.gol_update_interval) {
                 gol_frame_counter = 0;
                 game_of_life.update(map_cols, map_rows);
             }
         }
 
-        // Render pipeline:
-        // 1. Copy background to foreground
-        // 2. Process audio
-        // 3. Draw UI to foreground
-        // 4. Blit to GPU framebuffer
-
-        graphics.simdCopy(foreground_buffer, background_buffer, fb_size);
+        // Render
+        graphics.simdCopy(buffers.foreground, buffers.background, gfx.fb_size);
         audio.audio_player.update();
 
-        // Draw tileset preview if enabled (drawn to foreground, not persistent)
-        if (show_tileset) {
-            graphics.drawTilesetPreview(foreground_buffer, stride, constants.TILESET_DISPLAY_X, constants.PALETTE_DISPLAY_Y, constants.TILES_PER_ROW, constants.TILES_PER_COL);
+        if (config.show_tileset) {
+            graphics.drawTilesetPreview(buffers.foreground, gfx.stride, constants.TILESET_DISPLAY_X, constants.PALETTE_DISPLAY_Y, constants.TILES_PER_ROW, constants.TILES_PER_COL);
         }
 
-        // Draw Game of Life cells
-        game_of_life.draw(foreground_buffer, stride, map_cols, map_rows);
+        game_of_life.draw(buffers.foreground, gfx.stride, map_cols, map_rows);
 
-        // Check if civilization has collapsed
+        // Draw civilization collapsed message
         if (game_of_life.isDead() and game_of_life.generation > 0) {
-            // Draw "Civilisation collapsed" message in center
-            const center_x = screen_w / 2 - 150; // Approximate center (300px wide text)
-            const center_y = screen_h / 2 - 20;
-            const warning_color = 0xFFFF0000; // Red
-
-            // Main message
-            font.drawString(foreground_buffer, stride, center_x, center_y, "Civilisation collapsed!", warning_color);
-
-            // Duration info
-            const gen_str = "Lasted ";
-            font.drawString(foreground_buffer, stride, center_x, center_y + 15, gen_str, warning_color);
-            font.drawNumber3(foreground_buffer, stride, center_x + @as(u32, @intCast(gen_str.len)) * 9, center_y + 15, @intCast(game_of_life.generation), warning_color);
-            font.drawString(foreground_buffer, stride, center_x + @as(u32, @intCast(gen_str.len)) * 9 + 35, center_y + 15, "generations", warning_color);
+            ui.drawCivilizationCollapsed(buffers.foreground, gfx.stride, gfx.screen_w, gfx.screen_h, game_of_life.generation);
         }
 
-        // Draw UI
-        drawDebugInfo(foreground_buffer, stride, screen_w, &mouse_state, gol_running, game_of_life.countLiving(), gol_update_interval, game_of_life.generation);
-        graphics.drawSprite(foreground_buffer, stride, constants.CURSOR_TILE, mouse_state.x - 8, mouse_state.y - 8);
+        // Draw debug info
+        if (config.show_debug) {
+            ui.drawDebugInfo(buffers.foreground, gfx.stride, gfx.screen_w, &mouse_state, gol_running, game_of_life.countLiving(), config.gol_update_interval, game_of_life.generation);
+        }
 
-        graphics.simdCopy(fb, foreground_buffer, fb_size);
+        graphics.drawSprite(buffers.foreground, gfx.stride, constants.CURSOR_TILE, mouse_state.x - 8, mouse_state.y - 8);
+        graphics.simdCopy(gfx.framebuffer, buffers.foreground, gfx.fb_size);
     }
 
     // Cleanup
-    _ = boot_services.freePool(@ptrCast(@alignCast(background_buffer))) catch {};
-    _ = boot_services.freePool(@ptrCast(@alignCast(foreground_buffer))) catch {};
+    app.freeBuffers(boot_services, buffers);
     return .success;
 }
 
-fn drawDebugInfo(fb: [*]u32, fb_stride: u32, screen_w: u32, mouse_state: *const input.MouseState, gol_running: bool, living_cells: u32, gol_interval: u32, generation: u32) void {
-    const start_x = screen_w - 300;
-    const y = 5;
-    const color = 0xFFFFFFFF;
-
-    font.drawString(fb, fb_stride, start_x, y, "X:", color);
-    font.drawNumber3(fb, fb_stride, start_x + 15, y, mouse_state.x, color);
-
-    font.drawString(fb, fb_stride, start_x + 50, y, "Y:", color);
-    font.drawNumber3(fb, fb_stride, start_x + 65, y, mouse_state.y, color);
-
-    font.drawString(fb, fb_stride, start_x + 100, y, "DX:", color);
-    font.drawNumber3(fb, fb_stride, start_x + 120, y, mouse_state.last_dx, color);
-
-    font.drawString(fb, fb_stride, start_x + 160, y, "DY:", color);
-    font.drawNumber3(fb, fb_stride, start_x + 180, y, mouse_state.last_dy, color);
-
-    // Game of Life status
-    const gol_y = y + 15;
-    if (gol_running) {
-        font.drawString(fb, fb_stride, start_x, gol_y, "GOL:ON", color);
-    } else {
-        font.drawString(fb, fb_stride, start_x, gol_y, "GOL:OFF", color);
-    }
-    font.drawString(fb, fb_stride, start_x + 60, gol_y, "LIVE:", color);
-    font.drawNumber3(fb, fb_stride, start_x + 105, gol_y, @intCast(living_cells), color);
-
-    // Chaos mode indicator - always show status
-    const chaos_y = gol_y + 15;
-    if (game_of_life.isChaosMode()) {
-        font.drawString(fb, fb_stride, start_x, chaos_y, "CHAOS:ON", color);
-    } else {
-        font.drawString(fb, fb_stride, start_x, chaos_y, "CHAOS:OFF", color);
-    }
-
-    // Speed indicator (show frames per update, lower = faster)
-    const speed_y = chaos_y + 15;
-    font.drawString(fb, fb_stride, start_x, speed_y, "SPD:", color);
-    font.drawNumber3(fb, fb_stride, start_x + 35, speed_y, @intCast(gol_interval), color);
-
-    // Generation counter
-    const gen_y = speed_y + 15;
-    font.drawString(fb, fb_stride, start_x, gen_y, "GEN:", color);
-    font.drawNumber3(fb, fb_stride, start_x + 35, gen_y, @intCast(generation), color);
+/// Adjust Game of Life speed
+fn adjustSpeed(direction: i32) void {
+    const new_interval = if (direction < 0) config.gol_update_interval -| config.GOL_INTERVAL_STEP else config.gol_update_interval + config.GOL_INTERVAL_STEP;
+    config.gol_update_interval = utils.clampU32(new_interval, config.GOL_INTERVAL_MIN, config.GOL_INTERVAL_MAX);
+    audio.sfxClick();
 }
 
 pub fn panic(_: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
