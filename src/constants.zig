@@ -51,9 +51,10 @@ pub const terrain_rules: [11][8]u8 = .{
     .{ 10, 10, 10, 10, 9, 9, 9, 9 }, // Tile 10 -
 };
 
-// Maximum map size
+// Maximum map size (supports up to 1920x1280 / 16 = 120x80 tiles)
+// Compatible with 1920x1080 (16:9), 1920x1200 (16:10), and similar resolutions
 pub const MAX_MAP_COLS: u32 = 120;
-pub const MAX_MAP_ROWS: u32 = 68;
+pub const MAX_MAP_ROWS: u32 = 80;
 
 // UI constants
 pub const PALETTE_COLS: u32 = 4;

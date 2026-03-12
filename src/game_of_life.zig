@@ -33,6 +33,14 @@ pub const YOUNG_THRESHOLD: u8 = 5;
 /// Chaos mode: terrain-dependent probabilities for cell survival
 pub var chaos_mode: bool = true; // Enabled by default
 
+/// Generation counter
+pub var generation: u32 = 0;
+
+/// Check if civilization is dead (no living cells)
+pub fn isDead() bool {
+    return countLiving() == 0;
+}
+
 /// Check if a terrain tile is soil (can support life)
 fn isSoil(tile: u8) bool {
     return tile >= MIN_SOIL_TILE and tile <= MAX_SOIL_TILE;
@@ -60,6 +68,7 @@ pub fn killRockyCells(map_cols: u32, map_rows: u32) void {
 pub fn init(map_cols: u32, map_rows: u32) void {
     @memset(&cell_buffer, 0);
     @memset(&stability_counter, 0); // Reset stability tracking
+    generation = 0; // Reset generation counter
 
     var row: u32 = 0;
     while (row < map_rows) : (row += 1) {
@@ -80,6 +89,7 @@ pub fn init(map_cols: u32, map_rows: u32) void {
 pub fn clear() void {
     @memset(&cell_buffer, 0);
     @memset(&stability_counter, 0); // Reset stability tracking
+    generation = 0; // Reset generation counter
 }
 
 /// Count living neighbors for a cell
@@ -261,6 +271,9 @@ pub fn update(map_cols: u32, map_rows: u32) void {
 
     // Copy next generation to current
     @memcpy(&cell_buffer, &next_gen);
+
+    // Increment generation counter
+    generation += 1;
 }
 
 /// Toggle chaos mode

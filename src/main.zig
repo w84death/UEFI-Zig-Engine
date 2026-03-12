@@ -52,14 +52,35 @@ pub fn main() uefi.Status {
     };
     gop = result orelse return .aborted;
 
-    // Select graphics mode (prefer 1920x1080)
+    // Select graphics mode (prefer 1920x1200, then 1920x1080, then any 1920 width)
     var chosen_mode: u32 = gop.mode.mode;
     var mode_idx: u32 = 0;
+    var found_1080: ?u32 = null;
+    var found_1920: ?u32 = null;
+
     while (mode_idx < gop.mode.max_mode) : (mode_idx += 1) {
         const info = gop.queryMode(mode_idx) catch continue;
-        if (info.horizontal_resolution == 1920 and info.vertical_resolution == 1080) {
+        // Prefer 1920x1200 (WUXGA)
+        if (info.horizontal_resolution == 1920 and info.vertical_resolution == 1200) {
             chosen_mode = mode_idx;
             break;
+        }
+        // Remember 1920x1080 as fallback
+        if (found_1080 == null and info.horizontal_resolution == 1920 and info.vertical_resolution == 1080) {
+            found_1080 = mode_idx;
+        }
+        // Remember any 1920 width mode as last resort
+        if (found_1920 == null and info.horizontal_resolution == 1920) {
+            found_1920 = mode_idx;
+        }
+    }
+
+    // If we didn't find 1920x1200, use 1920x1080, or any 1920 width
+    if (chosen_mode == gop.mode.mode) {
+        if (found_1080) |mode| {
+            chosen_mode = mode;
+        } else if (found_1920) |mode| {
+            chosen_mode = mode;
         }
     }
 
@@ -238,8 +259,8 @@ pub fn main() uefi.Status {
             }
         }
 
-        // Update Game of Life simulation
-        if (gol_running) {
+        // Update Game of Life simulation (if civilization is still alive)
+        if (gol_running and !game_of_life.isDead()) {
             gol_frame_counter += 1;
             if (gol_frame_counter >= gol_update_interval) {
                 gol_frame_counter = 0;
@@ -264,8 +285,25 @@ pub fn main() uefi.Status {
         // Draw Game of Life cells
         game_of_life.draw(foreground_buffer, stride, map_cols, map_rows);
 
+        // Check if civilization has collapsed
+        if (game_of_life.isDead() and game_of_life.generation > 0) {
+            // Draw "Civilisation collapsed" message in center
+            const center_x = screen_w / 2 - 150; // Approximate center (300px wide text)
+            const center_y = screen_h / 2 - 20;
+            const warning_color = 0xFFFF0000; // Red
+
+            // Main message
+            font.drawString(foreground_buffer, stride, center_x, center_y, "Civilisation collapsed!", warning_color);
+
+            // Duration info
+            const gen_str = "Lasted ";
+            font.drawString(foreground_buffer, stride, center_x, center_y + 15, gen_str, warning_color);
+            font.drawNumber3(foreground_buffer, stride, center_x + @as(u32, @intCast(gen_str.len)) * 9, center_y + 15, @intCast(game_of_life.generation), warning_color);
+            font.drawString(foreground_buffer, stride, center_x + @as(u32, @intCast(gen_str.len)) * 9 + 35, center_y + 15, "generations", warning_color);
+        }
+
         // Draw UI
-        drawDebugInfo(foreground_buffer, stride, screen_w, &mouse_state, gol_running, game_of_life.countLiving(), gol_update_interval);
+        drawDebugInfo(foreground_buffer, stride, screen_w, &mouse_state, gol_running, game_of_life.countLiving(), gol_update_interval, game_of_life.generation);
         graphics.drawSprite(foreground_buffer, stride, constants.CURSOR_TILE, mouse_state.x - 8, mouse_state.y - 8);
 
         graphics.simdCopy(fb, foreground_buffer, fb_size);
@@ -277,7 +315,7 @@ pub fn main() uefi.Status {
     return .success;
 }
 
-fn drawDebugInfo(fb: [*]u32, fb_stride: u32, screen_w: u32, mouse_state: *const input.MouseState, gol_running: bool, living_cells: u32, gol_interval: u32) void {
+fn drawDebugInfo(fb: [*]u32, fb_stride: u32, screen_w: u32, mouse_state: *const input.MouseState, gol_running: bool, living_cells: u32, gol_interval: u32, generation: u32) void {
     const start_x = screen_w - 300;
     const y = 5;
     const color = 0xFFFFFFFF;
@@ -316,6 +354,11 @@ fn drawDebugInfo(fb: [*]u32, fb_stride: u32, screen_w: u32, mouse_state: *const 
     const speed_y = chaos_y + 15;
     font.drawString(fb, fb_stride, start_x, speed_y, "SPD:", color);
     font.drawNumber3(fb, fb_stride, start_x + 35, speed_y, @intCast(gol_interval), color);
+
+    // Generation counter
+    const gen_y = speed_y + 15;
+    font.drawString(fb, fb_stride, start_x, gen_y, "GEN:", color);
+    font.drawNumber3(fb, fb_stride, start_x + 35, gen_y, @intCast(generation), color);
 }
 
 pub fn panic(_: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
