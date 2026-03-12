@@ -39,16 +39,16 @@ pub const palette: [16]u32 = .{
 // Terrain generation rules - 11 tiles, each with 8 possible next tiles
 pub const terrain_rules: [11][8]u8 = .{
     .{ 0, 0, 1, 1, 0, 0, 1, 1 }, // Tile 0
-    .{ 1, 0, 1, 0, 1, 2, 1, 2 }, // Tile 1
-    .{ 2, 0, 1, 2, 1, 2, 3, 3 }, // Tile 2
-    .{ 3, 2, 1, 3, 2, 1, 4, 4 }, // Tile 3
-    .{ 4, 3, 2, 4, 3, 4, 5, 5 }, // Tile 4
-    .{ 5, 5, 3, 4, 4, 6, 6, 7 }, // Tile 5
-    .{ 6, 5, 5, 6, 6, 7, 6, 7 }, // Tile 6
-    .{ 7, 6, 7, 7, 7, 8, 8, 8 }, // Tile 7
-    .{ 8, 7, 7, 8, 8, 9, 9, 9 }, // Tile 8
-    .{ 9, 7, 8, 8, 9, 9, 10, 10 }, // Tile 9
-    .{ 10, 10, 10, 10, 9, 10, 9, 10 }, // Tile 10
+    .{ 1, 0, 1, 0, 1, 2, 1, 2 }, // Tile 1 - Danger zone
+    .{ 2, 1, 1, 2, 1, 2, 2, 3 }, // Tile 2 - Neutral zone
+    .{ 3, 3, 2, 3, 2, 4, 4, 6 }, // Tile 3 -
+    .{ 4, 3, 2, 4, 3, 4, 5, 6 }, // Tile 4 -
+    .{ 5, 5, 3, 4, 6, 6, 6, 7 }, // Tile 5 - Neutral zone
+    .{ 6, 5, 5, 6, 6, 7, 6, 7 }, // Tile 6 - Good zone
+    .{ 7, 6, 7, 7, 7, 8, 8, 8 }, // Tile 7 - Good zone
+    .{ 8, 6, 7, 7, 7, 8, 9, 9 }, // Tile 8 - No-go zone
+    .{ 9, 9, 9, 9, 10, 10, 8, 7 }, // Tile 9 -
+    .{ 10, 10, 10, 10, 9, 9, 9, 9 }, // Tile 10 -
 };
 
 // Maximum map size

@@ -13,6 +13,7 @@ pub const MouseState = struct {
     left_button: bool,
     right_button: bool,
     available: bool,
+    scroll_delta: i32, // Accumulated scroll wheel movement
 
     pub fn init(screen_w: u32, screen_h: u32, available: bool) MouseState {
         return .{
@@ -23,6 +24,7 @@ pub const MouseState = struct {
             .left_button = false,
             .right_button = false,
             .available = available,
+            .scroll_delta = 0,
         };
     }
 };
@@ -73,8 +75,20 @@ pub fn updateMouse(state: *MouseState, mouse: ?*uefi.protocol.SimplePointer, scr
             state.last_dy = @as(i32, @intCast(dy));
             state.left_button = ms.left_button;
             state.right_button = ms.right_button;
+
+            // Accumulate scroll wheel movement (Z axis)
+            // Most mice report 1 "click" as around 120 units
+            state.scroll_delta += @divTrunc(ms.relative_movement_z, 120);
         } else |_| {}
     }
+}
+
+/// Get accumulated scroll amount and reset counter
+/// Returns positive for scroll up (faster), negative for scroll down (slower)
+pub fn getScrollAndReset(state: *MouseState) i32 {
+    const delta = state.scroll_delta;
+    state.scroll_delta = 0;
+    return delta;
 }
 
 /// Check if point is within palette area

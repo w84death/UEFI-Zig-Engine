@@ -131,7 +131,9 @@ pub fn main() uefi.Status {
     // Main loop
     var running = true;
     var gol_frame_counter: u32 = 0;
-    const gol_update_interval: u32 = 30; // Update Game of Life every 30 frames (0.5 seconds at 60fps)
+    var gol_update_interval: u32 = 30; // Update Game of Life every N frames (adjustable)
+    const gol_interval_min: u32 = 1; // Maximum speed (5 frames)
+    const gol_interval_max: u32 = 120; // Minimum speed (120 frames = 2 seconds)
     var gol_running = true; // Toggle Game of Life simulation
     var show_tileset = false; // Toggle tileset display with 'T' key
     while (running) {
@@ -163,6 +165,28 @@ pub fn main() uefi.Status {
                     // 'T' key toggles tileset display
                     show_tileset = !show_tileset;
                     sfxClick();
+                } else if (c == 'h' or c == 'H') {
+                    // 'H' key toggles chaos mode (H for "chaos/Havok")
+                    game_of_life.toggleChaosMode();
+                    sfxClick();
+                } else if (c == '+' or c == '=') {
+                    // '+' key speeds up (decreases interval)
+                    if (gol_update_interval > gol_interval_min) {
+                        gol_update_interval -= 5;
+                        if (gol_update_interval < gol_interval_min) gol_update_interval = gol_interval_min;
+                        sfxClick();
+                    } else {
+                        sfxError();
+                    }
+                } else if (c == '-') {
+                    // '-' key slows down (increases interval)
+                    if (gol_update_interval < gol_interval_max) {
+                        gol_update_interval += 5;
+                        if (gol_update_interval > gol_interval_max) gol_update_interval = gol_interval_max;
+                        sfxClick();
+                    } else {
+                        sfxError();
+                    }
                 } else if (c == 'q' or c == 'Q') {
                     // 'Q' key quits
                     running = false;
@@ -194,6 +218,24 @@ pub fn main() uefi.Status {
                     }
                 }
             }
+
+            // Scroll wheel: adjust simulation speed
+            const scroll = input.getScrollAndReset(&mouse_state);
+            if (scroll > 0) {
+                // Scroll up: speed up (decrease interval)
+                if (gol_update_interval > gol_interval_min) {
+                    gol_update_interval -= 5;
+                    if (gol_update_interval < gol_interval_min) gol_update_interval = gol_interval_min;
+                    sfxClick();
+                }
+            } else if (scroll < 0) {
+                // Scroll down: slow down (increase interval)
+                if (gol_update_interval < gol_interval_max) {
+                    gol_update_interval += 5;
+                    if (gol_update_interval > gol_interval_max) gol_update_interval = gol_interval_max;
+                    sfxClick();
+                }
+            }
         }
 
         // Update Game of Life simulation
@@ -223,7 +265,7 @@ pub fn main() uefi.Status {
         game_of_life.draw(foreground_buffer, stride, map_cols, map_rows);
 
         // Draw UI
-        drawDebugInfo(foreground_buffer, stride, screen_w, &mouse_state, gol_running, game_of_life.countLiving());
+        drawDebugInfo(foreground_buffer, stride, screen_w, &mouse_state, gol_running, game_of_life.countLiving(), gol_update_interval);
         graphics.drawSprite(foreground_buffer, stride, constants.CURSOR_TILE, mouse_state.x - 8, mouse_state.y - 8);
 
         graphics.simdCopy(fb, foreground_buffer, fb_size);
@@ -235,7 +277,7 @@ pub fn main() uefi.Status {
     return .success;
 }
 
-fn drawDebugInfo(fb: [*]u32, fb_stride: u32, screen_w: u32, mouse_state: *const input.MouseState, gol_running: bool, living_cells: u32) void {
+fn drawDebugInfo(fb: [*]u32, fb_stride: u32, screen_w: u32, mouse_state: *const input.MouseState, gol_running: bool, living_cells: u32, gol_interval: u32) void {
     const start_x = screen_w - 300;
     const y = 5;
     const color = 0xFFFFFFFF;
@@ -261,6 +303,19 @@ fn drawDebugInfo(fb: [*]u32, fb_stride: u32, screen_w: u32, mouse_state: *const 
     }
     font.drawString(fb, fb_stride, start_x + 60, gol_y, "LIVE:", color);
     font.drawNumber3(fb, fb_stride, start_x + 105, gol_y, @intCast(living_cells), color);
+
+    // Chaos mode indicator - always show status
+    const chaos_y = gol_y + 15;
+    if (game_of_life.isChaosMode()) {
+        font.drawString(fb, fb_stride, start_x, chaos_y, "CHAOS:ON", color);
+    } else {
+        font.drawString(fb, fb_stride, start_x, chaos_y, "CHAOS:OFF", color);
+    }
+
+    // Speed indicator (show frames per update, lower = faster)
+    const speed_y = chaos_y + 15;
+    font.drawString(fb, fb_stride, start_x, speed_y, "SPD:", color);
+    font.drawNumber3(fb, fb_stride, start_x + 35, speed_y, @intCast(gol_interval), color);
 }
 
 pub fn panic(_: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {
