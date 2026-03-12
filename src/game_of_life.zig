@@ -13,9 +13,9 @@ const rng = @import("rng.zig");
 pub const MAX_CELLS = constants.MAX_MAP_COLS * constants.MAX_MAP_ROWS;
 pub var cell_buffer: [MAX_CELLS]u8 = undefined;
 
-// Soil tile range (tiles 1-8 are valid for spawning)
-const MIN_SOIL_TILE: u8 = 1;
-const MAX_SOIL_TILE: u8 = 8;
+// Soil tile range (tiles 0-6 are valid for life, 7-10 are rocky/deadly)
+const MIN_SOIL_TILE: u8 = 0;
+const MAX_SOIL_TILE: u8 = 6;
 
 /// Living cell sprite (tile index 20, which is the 21st tile)
 pub const LIVING_CELL_TILE: u32 = 20;
@@ -23,6 +23,24 @@ pub const LIVING_CELL_TILE: u32 = 20;
 /// Check if a terrain tile is soil (can support life)
 fn isSoil(tile: u8) bool {
     return tile >= MIN_SOIL_TILE and tile <= MAX_SOIL_TILE;
+}
+
+/// Kill all cells on rocky terrain (>=7)
+pub fn killRockyCells(map_cols: u32, map_rows: u32) void {
+    var row: u32 = 0;
+    while (row < map_rows) : (row += 1) {
+        var col: u32 = 0;
+        while (col < map_cols) : (col += 1) {
+            const map_idx = row * map_cols + col;
+            if (cell_buffer[map_idx] != 0) {
+                const terrain_tile = terrain.getTile(map_idx);
+                // Kill cell if terrain is rocky (>=7, i.e., not 0-6)
+                if (terrain_tile > MAX_SOIL_TILE) {
+                    cell_buffer[map_idx] = 0;
+                }
+            }
+        }
+    }
 }
 
 /// Initialize the Game of Life with random cells on soil
@@ -82,6 +100,9 @@ fn countNeighbors(map_cols: u32, map_rows: u32, row: u32, col: u32) u8 {
 /// - Overpopulation: > 3 neighbors = die
 /// - Reproduction: exactly 3 neighbors = birth (only on soil)
 pub fn update(map_cols: u32, map_rows: u32) void {
+    // First, kill any cells on rocky terrain
+    killRockyCells(map_cols, map_rows);
+
     // Temporary buffer for next generation
     var next_gen: [MAX_CELLS]u8 = undefined;
     @memset(&next_gen, 0);

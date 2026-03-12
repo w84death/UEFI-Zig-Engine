@@ -121,7 +121,7 @@ pub fn main() uefi.Status {
     // Initial render setup
     graphics.clearScreen(background_buffer, stride, screen_w, screen_h, 0xFF000000);
     terrain.generateTerrain(background_buffer, stride, screen_w, screen_h);
-    graphics.drawTilesetPreview(background_buffer, stride, constants.TILESET_DISPLAY_X, constants.PALETTE_DISPLAY_Y, constants.TILES_PER_ROW, constants.TILES_PER_COL);
+    // Note: tileset preview no longer drawn by default
 
     // Initialize Game of Life
     const map_cols = screen_w / constants.TILE_SIZE;
@@ -133,6 +133,7 @@ pub fn main() uefi.Status {
     var gol_frame_counter: u32 = 0;
     const gol_update_interval: u32 = 30; // Update Game of Life every 30 frames (0.5 seconds at 60fps)
     var gol_running = true; // Toggle Game of Life simulation
+    var show_tileset = false; // Toggle tileset display with 'T' key
     while (running) {
         const wait_result = boot_services.waitForEvent(events[0..num_events]) catch continue;
         const index = wait_result[1];
@@ -158,6 +159,10 @@ pub fn main() uefi.Status {
                     // 'R' key reinitializes with random cells
                     game_of_life.init(map_cols, map_rows);
                     sfxRegenerate();
+                } else if (c == 't' or c == 'T') {
+                    // 'T' key toggles tileset display
+                    show_tileset = !show_tileset;
+                    sfxClick();
                 } else if (c == 'q' or c == 'Q') {
                     // 'Q' key quits
                     running = false;
@@ -169,15 +174,15 @@ pub fn main() uefi.Status {
         if (mouse_state.available and index == 2) {
             input.updateMouse(&mouse_state, mouse, screen_w, screen_h);
 
-            // Right button: regenerate terrain
+            // Right button: regenerate terrain and reset Game of Life
             if (mouse_state.right_button) {
                 sfxRegenerate();
                 rng.setSeed(rng.generateSeedFromPos(mouse_state.x, mouse_state.y));
                 terrain.generateTerrain(background_buffer, stride, screen_w, screen_h);
-                graphics.drawTilesetPreview(background_buffer, stride, constants.TILESET_DISPLAY_X, constants.PALETTE_DISPLAY_Y, constants.TILES_PER_ROW, constants.TILES_PER_COL);
+                game_of_life.init(map_cols, map_rows); // Reset Game of Life on terrain regen
             }
 
-            // Left button: spawn new life (only on soil tiles 1-8)
+            // Left button: spawn new life (only on soil tiles 0-6)
             if (mouse_state.left_button and !input.inPalette(mouse_state.x, mouse_state.y)) {
                 const grid = input.screenToGrid(mouse_state.x, mouse_state.y);
                 // Only spawn if cell is not already alive
@@ -208,6 +213,11 @@ pub fn main() uefi.Status {
 
         graphics.simdCopy(foreground_buffer, background_buffer, fb_size);
         audio.audio_player.update();
+
+        // Draw tileset preview if enabled (drawn to foreground, not persistent)
+        if (show_tileset) {
+            graphics.drawTilesetPreview(foreground_buffer, stride, constants.TILESET_DISPLAY_X, constants.PALETTE_DISPLAY_Y, constants.TILES_PER_ROW, constants.TILES_PER_COL);
+        }
 
         // Draw Game of Life cells
         game_of_life.draw(foreground_buffer, stride, map_cols, map_rows);
