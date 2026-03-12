@@ -43,10 +43,8 @@ pub fn initMouse(boot_services: *uefi.tables.BootServices) ?*uefi.protocol.Simpl
 /// Get mouse event for waiting
 pub fn getMouseEvent(mouse: ?*uefi.protocol.SimplePointer) ?uefi.Event {
     if (mouse) |m| {
-        const evt = m.wait_for_input;
-        if (@intFromPtr(evt) != 0) {
-            return evt;
-        }
+        // wait_for_input is always valid if protocol opened successfully
+        return m.wait_for_input;
     }
     return null;
 }

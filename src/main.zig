@@ -71,6 +71,14 @@ pub fn main() uefi.Status {
     const map_rows = gfx.screen_h / constants.TILE_SIZE;
     game_of_life.init(map_cols, map_rows);
 
+    // Initial display update (don't wait for first event)
+    graphics.simdCopy(buffers.foreground, buffers.background, gfx.fb_size);
+    game_of_life.draw(buffers.foreground, gfx.stride, map_cols, map_rows);
+    if (mouse != null) {
+        graphics.drawSprite(buffers.foreground, gfx.stride, constants.CURSOR_TILE, mouse_state.x - 8, mouse_state.y - 8);
+    }
+    graphics.simdCopy(gfx.framebuffer, buffers.foreground, gfx.fb_size);
+
     // Main loop
     var running = true;
     var gol_frame_counter: u32 = 0;
@@ -113,8 +121,8 @@ pub fn main() uefi.Status {
             } else |_| {}
         }
 
-        // Handle mouse input
-        if (mouse_state.available and index == 2) {
+        // Handle mouse input (index 2 is mouse when num_events == 3)
+        if (events.num_events == 3 and index == 2) {
             input.updateMouse(&mouse_state, mouse, gfx.screen_w, gfx.screen_h);
 
             // Right button: regenerate terrain
@@ -171,7 +179,9 @@ pub fn main() uefi.Status {
             ui.drawDebugInfo(buffers.foreground, gfx.stride, gfx.screen_w, &mouse_state, gol_running, game_of_life.countLiving(), config.gol_update_interval, game_of_life.generation);
         }
 
-        graphics.drawSprite(buffers.foreground, gfx.stride, constants.CURSOR_TILE, mouse_state.x - 8, mouse_state.y - 8);
+        if (mouse != null) {
+            graphics.drawSprite(buffers.foreground, gfx.stride, constants.CURSOR_TILE, mouse_state.x - 8, mouse_state.y - 8);
+        }
         graphics.simdCopy(gfx.framebuffer, buffers.foreground, gfx.fb_size);
     }
 
