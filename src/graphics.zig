@@ -91,8 +91,10 @@ pub fn drawSprite(fb: [*]u32, fb_stride: u32, tile_index: u32, screen_x: i32, sc
             const g = ppm_data[pixel_offset + 1];
             const b = ppm_data[pixel_offset + 2];
 
-            // Skip near-black pixels (treat as transparent)
-            if (r < 20 and g < 20 and b < 20) continue;
+            // Skip palette color 0 (black) pixels - treat as transparent
+            // Palette color 0 is 0xFF140C1C = RGB(20, 12, 28)
+            // Use tolerance to account for slight variations in the sprite
+            if (r <= 30 and g <= 25 and b <= 40) continue;
 
             fb[@as(u32, @intCast(pixel_y)) * fb_stride + @as(u32, @intCast(pixel_x))] = rgbToBgra(r, g, b);
         }
