@@ -70,7 +70,9 @@ pub const font_data = [_][8]u8{
 
 // Draw a single character at (x,y) with shadow effect
 pub fn drawChar(fb: [*]u32, fb_stride: u32, x: u32, y: u32, c: u8, color: u32) void {
-    const idx = c - constants.FONT_FIRST_CHAR;
+    // Convert to uppercase for font lookup (font only has ASCII 32-90)
+    const upper_c = if (c >= 'a' and c <= 'z') c - 32 else c;
+    const idx = upper_c - constants.FONT_FIRST_CHAR;
     if (idx >= constants.FONT_CHAR_COUNT) return;
 
     const char_data = font_data[idx];
