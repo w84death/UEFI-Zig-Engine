@@ -25,7 +25,7 @@ const graphics = @import("graphics.zig");
 const terrain = @import("terrain.zig");
 const input = @import("input.zig");
 const game_of_life = @import("game_of_life.zig");
-const audio = @import("audio.zig");
+// const audio = @import("audio.zig");
 const ui = @import("ui.zig");
 const font = @import("font.zig");
 
@@ -95,23 +95,28 @@ pub fn main() uefi.Status {
                 switch (c) {
                     ' ' => {
                         gol_running = !gol_running;
-                        audio.sfxClick();
+                        // audio.sfxClick();
                     },
                     'c', 'C' => {
                         game_of_life.clear();
-                        audio.sfxRegenerate();
+                        // audio.sfxRegenerate();
                     },
                     'r', 'R' => {
                         game_of_life.init(map_cols, map_rows);
-                        audio.sfxRegenerate();
+                        // audio.sfxRegenerate();
                     },
                     't', 'T' => {
                         config.show_tileset = !config.show_tileset;
-                        audio.sfxClick();
+                        // audio.sfxClick();
                     },
                     'h', 'H' => {
                         game_of_life.toggleChaosMode();
-                        audio.sfxClick();
+                        // audio.sfxClick();
+                    },
+                    'g', 'G' => {
+                        utils.rngSetSeed(utils.generateSeedFromPos(mouse_state.x, mouse_state.y));
+                        terrain.generateTerrain(buffers.background, gfx.stride, gfx.screen_w, gfx.screen_h);
+                        game_of_life.init(map_cols, map_rows);
                     },
                     '+', '=' => adjustSpeed(-1),
                     '-' => adjustSpeed(1),
@@ -127,7 +132,7 @@ pub fn main() uefi.Status {
 
             // Right button: regenerate terrain
             if (mouse_state.right_button) {
-                audio.sfxRegenerate();
+                // audio.sfxRegenerate();
                 utils.rngSetSeed(utils.generateSeedFromPos(mouse_state.x, mouse_state.y));
                 terrain.generateTerrain(buffers.background, gfx.stride, gfx.screen_w, gfx.screen_h);
                 game_of_life.init(map_cols, map_rows);
@@ -138,9 +143,9 @@ pub fn main() uefi.Status {
                 const grid = utils.screenToGrid(mouse_state.x, mouse_state.y, constants.TILE_SIZE);
                 if (!game_of_life.isAlive(grid.col, grid.row, map_cols)) {
                     if (game_of_life.spawnCell(grid.col, grid.row, map_cols)) {
-                        audio.sfxClick();
+                        // audio.sfxClick();
                     } else {
-                        audio.sfxError();
+                        // audio.sfxError();
                     }
                 }
             }
@@ -161,7 +166,7 @@ pub fn main() uefi.Status {
 
         // Render
         graphics.simdCopy(buffers.foreground, buffers.background, gfx.fb_size);
-        audio.audio_player.update();
+        // audio.audio_player.update();
 
         if (config.show_tileset) {
             graphics.drawTilesetPreview(buffers.foreground, gfx.stride, constants.TILESET_DISPLAY_X, constants.PALETTE_DISPLAY_Y, constants.TILES_PER_ROW, constants.TILES_PER_COL);
@@ -176,7 +181,7 @@ pub fn main() uefi.Status {
 
         // Draw debug info
         if (config.show_debug) {
-            ui.drawDebugInfo(buffers.foreground, gfx.stride, gfx.screen_w, &mouse_state, gol_running, game_of_life.countLiving(), config.gol_update_interval, game_of_life.generation);
+            ui.drawDebugInfo(buffers.foreground, gfx.stride, gfx.screen_w, gfx.screen_h, &mouse_state, gol_running, game_of_life.countLiving(), config.gol_update_interval, game_of_life.generation);
         }
 
         if (mouse != null) {
@@ -194,7 +199,7 @@ pub fn main() uefi.Status {
 fn adjustSpeed(direction: i32) void {
     const new_interval = if (direction < 0) config.gol_update_interval -| config.GOL_INTERVAL_STEP else config.gol_update_interval + config.GOL_INTERVAL_STEP;
     config.gol_update_interval = utils.clampU32(new_interval, config.GOL_INTERVAL_MIN, config.GOL_INTERVAL_MAX);
-    audio.sfxClick();
+    // audio.sfxClick();
 }
 
 pub fn panic(_: []const u8, _: ?*std.builtin.StackTrace, _: ?usize) noreturn {

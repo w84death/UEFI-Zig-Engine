@@ -19,14 +19,15 @@ pub fn drawDebugInfo(
     fb: [*]u32,
     fb_stride: u32,
     screen_w: u32,
+    screen_h: u32,
     mouse_state: *const input.MouseState,
     gol_running: bool,
     living_cells: u32,
     gol_interval: u32,
     generation: u32,
 ) void {
-    const win_w: u32 = 280;
-    const win_h: u32 = 140;
+    const win_w: u32 = 300;
+    const win_h: u32 = 180;
     const win_x = screen_w - win_w - 10;
     const win_y: u32 = 10;
     const text_color = 0xFFFFFFFF;
@@ -44,46 +45,53 @@ pub fn drawDebugInfo(
     const content_x = win_x + WINDOW_PADDING_X;
     const content_y = win_y + WINDOW_PADDING_Y + 16; // Below title
 
-    // Line 1: Mouse X/Y
+    // Line 1: Resolution
     var y = content_y;
+    font.drawString(fb, fb_stride, content_x, y, "RES:", text_color);
+    font.drawNumber(fb, fb_stride, content_x + 35, y, screen_w, text_color);
+    font.drawString(fb, fb_stride, content_x + 85, y, "x", text_color);
+    font.drawNumber(fb, fb_stride, content_x + 100, y, screen_h, text_color);
+
+    // Line 2: Mouse X/Y
+    y += LINE_HEIGHT;
     font.drawString(fb, fb_stride, content_x, y, "X:", text_color);
     font.drawNumber3(fb, fb_stride, content_x + 20, y, mouse_state.x, text_color);
     font.drawString(fb, fb_stride, content_x + 70, y, "Y:", text_color);
     font.drawNumber3(fb, fb_stride, content_x + 90, y, mouse_state.y, text_color);
 
-    // Line 2: Mouse DX/DY
+    // Line 3: Mouse DX/DY
     y += LINE_HEIGHT;
     font.drawString(fb, fb_stride, content_x, y, "DX:", text_color);
     font.drawNumber3(fb, fb_stride, content_x + 25, y, mouse_state.last_dx, text_color);
     font.drawString(fb, fb_stride, content_x + 75, y, "DY:", text_color);
     font.drawNumber3(fb, fb_stride, content_x + 100, y, mouse_state.last_dy, text_color);
 
-    // Line 3: GOL status and living count
+    // Line 4: GOL status and living count
     y += LINE_HEIGHT;
-    const status_str = if (gol_running) "GOL: ON " else "GOL: OFF";
+    const status_str = if (gol_running) "GOL:ON " else "GOL:OFF";
     font.drawString(fb, fb_stride, content_x, y, status_str, text_color);
-    font.drawString(fb, fb_stride, content_x + 80, y, "LIVE:", text_color);
-    font.drawNumber3(fb, fb_stride, content_x + 125, y, @intCast(living_cells), text_color);
+    font.drawString(fb, fb_stride, content_x + 70, y, "LIVE:", text_color);
+    font.drawNumber3(fb, fb_stride, content_x + 115, y, @intCast(living_cells), text_color);
 
-    // Line 4: Chaos mode
+    // Line 5: Chaos mode
     y += LINE_HEIGHT;
-    const chaos_str = if (game_of_life.isChaosMode()) "CHAOS: ON " else "CHAOS: OFF";
+    const chaos_str = if (game_of_life.isChaosMode()) "CHAOS:ON " else "CHAOS:OFF";
     font.drawString(fb, fb_stride, content_x, y, chaos_str, text_color);
 
-    // Line 5: Speed and Generation
+    // Line 6: Speed and Generation
     y += LINE_HEIGHT;
     font.drawString(fb, fb_stride, content_x, y, "SPD:", text_color);
     font.drawNumber3(fb, fb_stride, content_x + 35, y, @intCast(gol_interval), text_color);
-
-    y += LINE_HEIGHT;
-    font.drawString(fb, fb_stride, content_x, y, "GEN:", text_color);
-    font.drawNumber(fb, fb_stride, content_x + 75, y, generation, text_color);
+    font.drawString(fb, fb_stride, content_x + 65, y, "GEN:", text_color);
+    font.drawNumber(fb, fb_stride, content_x + 105, y, generation, text_color);
 
     // Controls help at bottom
-    y += LINE_HEIGHT + 4;
-    font.drawString(fb, fb_stride, content_x, y, "SPACE:Pause C:Clear", text_color);
+    y += LINE_HEIGHT + 6;
+    font.drawString(fb, fb_stride, content_x, y, "SPACE:Pause | G:Terrain", text_color);
     y += LINE_HEIGHT;
-    font.drawString(fb, fb_stride, content_x, y, "R:Reset T:Tileset +/-:Speed", text_color);
+    font.drawString(fb, fb_stride, content_x, y, "C:Clear | R:Reset | T:Tileset", text_color);
+    y += LINE_HEIGHT;
+    font.drawString(fb, fb_stride, content_x, y, "+/-:Speed | H:Chaos", text_color);
 }
 
 /// Draw "Civilisation collapsed" message in a centered window
