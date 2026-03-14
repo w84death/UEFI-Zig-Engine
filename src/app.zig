@@ -136,19 +136,22 @@ pub fn setupEvents(
         timer_event = con_in.wait_for_key;
     }
 
-    // Setup event loop (key, timer, and optional mouse)
+    // Setup event loop: keyboard(0), mouse(1), timer(2)
+    // Mouse event MUST be at index 1 (like working reference)
     var events: [3]uefi.Event = undefined;
     var num_events: usize = 2;
     events[0] = con_in.wait_for_key;
-    events[1] = timer_event;
 
-    // Add mouse event if available - event-driven only (no polling)
-    // Some UEFI firmware don't signal this event, so mouse won't work on those systems
     if (mouse_available) {
         if (input.getMouseEvent(mouse)) |evt| {
-            events[2] = evt;
+            events[1] = evt;
+            events[2] = timer_event;
             num_events = 3;
+        } else {
+            events[1] = timer_event;
         }
+    } else {
+        events[1] = timer_event;
     }
 
     return EventConfig{
