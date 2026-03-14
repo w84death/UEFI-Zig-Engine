@@ -148,3 +148,134 @@ pub fn drawCivilizationCollapsed(
     const y3 = y2 + LINE_HEIGHT + 4;
     font.drawString(fb, fb_stride, content_x + 40, y3, "Press R to restart", text_color);
 }
+
+/// Draw detailed mouse debug information in a window
+pub fn drawMouseDebugInfo(
+    fb: [*]u32,
+    fb_stride: u32,
+    mouse_state: *const input.MouseState,
+    num_events: usize,
+) void {
+    const win_w: u32 = 300;
+    const win_h: u32 = 200;
+    const win_x: u32 = 10;
+    const win_y: u32 = 10;
+    const text_color = 0xFFFFFFFF;
+    const warn_color = 0xFFFFD700; // Yellow for warnings
+    const error_color = 0xFFFF0000; // Red for errors
+    const ok_color = 0xFF00FF00; // Green for OK
+
+    // Draw window frame
+    window.drawWindow(fb, fb_stride, .{
+        .x = win_x,
+        .y = win_y,
+        .w = win_w,
+        .h = win_h,
+        .title = "MOUSE DEBUG",
+    });
+
+    // Content area starts below title bar
+    const content_x = win_x + WINDOW_PADDING_X;
+    const content_y = win_y + WINDOW_PADDING_Y + 16;
+
+    // Line 1: Available status and event count
+    var y = content_y;
+    const avail_str = if (mouse_state.available) "AVAILABLE:YES" else "AVAILABLE:NO";
+    const avail_color: u32 = if (mouse_state.available) ok_color else error_color;
+    font.drawString(fb, fb_stride, content_x, y, avail_str, avail_color);
+    font.drawString(fb, fb_stride, content_x + 160, y, "EVT:", text_color);
+    font.drawNumber(fb, fb_stride, content_x + 195, y, @intCast(num_events), text_color);
+
+    // Line 2: Event triggered status and update count
+    y += LINE_HEIGHT;
+    const trig_str = if (mouse_state.event_triggered) "EVT_FIRE:YES" else "EVT_FIRE:NO";
+    const trig_color: u32 = if (mouse_state.event_triggered) ok_color else error_color;
+    font.drawString(fb, fb_stride, content_x, y, trig_str, trig_color);
+    font.drawString(fb, fb_stride, content_x + 140, y, "UPD:", text_color);
+    font.drawNumber(fb, fb_stride, content_x + 175, y, mouse_state.update_count, text_color);
+
+    // Line 3: Protocol pointer at init vs runtime
+    y += LINE_HEIGHT;
+    font.drawString(fb, fb_stride, content_x, y, "INIT:", text_color);
+    if (mouse_state.init_protocol_ptr == 0) {
+        font.drawString(fb, fb_stride, content_x + 35, y, "NULL", error_color);
+    } else {
+        const init_lo: u32 = @intCast(mouse_state.init_protocol_ptr & 0xFFFFFFFF);
+        font.drawNumber(fb, fb_stride, content_x + 35, y, init_lo, ok_color);
+    }
+    font.drawString(fb, fb_stride, content_x + 100, y, "NOW:", text_color);
+    if (mouse_state.protocol_ptr == 0) {
+        font.drawString(fb, fb_stride, content_x + 135, y, "NULL", error_color);
+    } else {
+        const prot_lo: u32 = @intCast(mouse_state.protocol_ptr & 0xFFFFFFFF);
+        font.drawNumber(fb, fb_stride, content_x + 135, y, prot_lo, ok_color);
+    }
+
+    // Line 4: Event pointer (low 32 bits)
+    y += LINE_HEIGHT;
+    font.drawString(fb, fb_stride, content_x, y, "EVENT:", text_color);
+    if (mouse_state.event_ptr == 0) {
+        font.drawString(fb, fb_stride, content_x + 50, y, "NOT SET", error_color);
+    } else {
+        const evt_lo: u32 = @intCast(mouse_state.event_ptr & 0xFFFFFFFF);
+        font.drawNumber(fb, fb_stride, content_x + 50, y, evt_lo, text_color);
+    }
+
+    // Line 5: GetState status - distinguish between OK, NotReady, DeviceError
+    y += LINE_HEIGHT;
+    font.drawString(fb, fb_stride, content_x, y, "STATE:", text_color);
+    if (mouse_state.getstate_ok) {
+        if (mouse_state.not_ready_count > 0 and mouse_state.device_error_count == 0) {
+            font.drawString(fb, fb_stride, content_x + 50, y, "NOT_READY", warn_color);
+        } else {
+            font.drawString(fb, fb_stride, content_x + 50, y, "OK", ok_color);
+        }
+    } else {
+        font.drawString(fb, fb_stride, content_x + 50, y, "FAIL", error_color);
+    }
+
+    // Line 6: Error counters
+    y += LINE_HEIGHT;
+    font.drawString(fb, fb_stride, content_x, y, "NRDY:", text_color);
+    font.drawNumber(fb, fb_stride, content_x + 40, y, mouse_state.not_ready_count, text_color);
+    font.drawString(fb, fb_stride, content_x + 100, y, "DERR:", text_color);
+    font.drawNumber(fb, fb_stride, content_x + 140, y, mouse_state.device_error_count, error_color);
+    font.drawString(fb, fb_stride, content_x + 180, y, "OERR:", text_color);
+    font.drawNumber(fb, fb_stride, content_x + 220, y, mouse_state.other_error_count, error_color);
+
+    // Line 7: Raw DX/DY values
+    y += LINE_HEIGHT;
+    font.drawString(fb, fb_stride, content_x, y, "RAW:", text_color);
+    if (mouse_state.last_raw_dx != 0 or mouse_state.last_raw_dy != 0) {
+        font.drawString(fb, fb_stride, content_x + 35, y, "DX:", warn_color);
+        font.drawNumber(fb, fb_stride, content_x + 60, y, @intCast(mouse_state.last_raw_dx), warn_color);
+        font.drawString(fb, fb_stride, content_x + 130, y, "DY:", warn_color);
+        font.drawNumber(fb, fb_stride, content_x + 155, y, @intCast(mouse_state.last_raw_dy), warn_color);
+    } else {
+        font.drawString(fb, fb_stride, content_x + 35, y, "NO MOVEMENT", warn_color);
+    }
+
+    // Line 8: Scaled DX/DY
+    y += LINE_HEIGHT;
+    font.drawString(fb, fb_stride, content_x, y, "SCL:", text_color);
+    font.drawString(fb, fb_stride, content_x + 35, y, "DX:", text_color);
+    font.drawNumber3(fb, fb_stride, content_x + 60, y, mouse_state.last_dx, text_color);
+    font.drawString(fb, fb_stride, content_x + 100, y, "DY:", text_color);
+    font.drawNumber3(fb, fb_stride, content_x + 125, y, mouse_state.last_dy, text_color);
+
+    // Line 9: Buttons and disabled status
+    y += LINE_HEIGHT;
+    font.drawString(fb, fb_stride, content_x, y, "BTN:", text_color);
+    const l_str = if (mouse_state.left_button) "LEFT:1" else "LEFT:0";
+    const r_str = if (mouse_state.right_button) "RIGHT:1" else "RIGHT:0";
+    font.drawString(fb, fb_stride, content_x + 35, y, l_str, text_color);
+    font.drawString(fb, fb_stride, content_x + 90, y, r_str, text_color);
+    const dis_str = if (mouse_state.disabled) "DIS:1" else "DIS:0";
+    const dis_color: u32 = if (mouse_state.disabled) error_color else text_color;
+    font.drawString(fb, fb_stride, content_x + 145, y, dis_str, dis_color);
+
+    // Line 10: Consecutive errors
+    y += LINE_HEIGHT;
+    font.drawString(fb, fb_stride, content_x, y, "CERR:", text_color);
+    font.drawNumber(fb, fb_stride, content_x + 40, y, mouse_state.consecutive_errors, text_color);
+}

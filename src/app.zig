@@ -112,7 +112,7 @@ pub fn freeBuffers(boot_services: *uefi.tables.BootServices, buffers: AppBuffers
     _ = boot_services.freePool(@ptrCast(@alignCast(buffers.foreground))) catch {};
 }
 
-/// Setup event loop with timer, keyboard, and optional mouse
+/// Setup event loop with timer and keyboard (mouse is polled, not event-driven)
 pub fn setupEvents(
     boot_services: *uefi.tables.BootServices,
     con_in: *uefi.protocol.SimpleTextInput,
@@ -136,12 +136,14 @@ pub fn setupEvents(
         timer_event = con_in.wait_for_key;
     }
 
-    // Setup event loop (max 3 events: key, timer, mouse)
+    // Setup event loop (key, timer, and optional mouse)
     var events: [3]uefi.Event = undefined;
     var num_events: usize = 2;
     events[0] = con_in.wait_for_key;
     events[1] = timer_event;
 
+    // Add mouse event if available - event-driven only (no polling)
+    // Some UEFI firmware don't signal this event, so mouse won't work on those systems
     if (mouse_available) {
         if (input.getMouseEvent(mouse)) |evt| {
             events[2] = evt;

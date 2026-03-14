@@ -55,12 +55,15 @@ pub fn main() uefi.Status {
 
     // Initialize input
     const mouse = input.initMouse(boot_services);
-    var mouse_state = input.MouseState.init(gfx.screen_w, gfx.screen_h, mouse != null);
+    var mouse_state = input.MouseState.init(gfx.screen_w, gfx.screen_h, mouse != null, mouse);
 
     // Setup events
     const events = app.setupEvents(boot_services, con_in, mouse, mouse_state.available) catch {
         return .aborted;
     };
+
+    // Update mouse availability based on actual event registration
+    mouse_state.available = events.num_events == 3;
 
     // Initial render
     graphics.clearScreen(buffers.background, gfx.stride, gfx.screen_w, gfx.screen_h, 0xFF000000);
@@ -126,8 +129,9 @@ pub fn main() uefi.Status {
             } else |_| {}
         }
 
-        // Handle mouse input (index 2 is mouse when num_events == 3)
-        if (events.num_events == 3 and index == 2) {
+        // Handle mouse input - event-driven only (when SimplePointer signals)
+        if (mouse != null and events.num_events == 3 and index == 2) {
+            mouse_state.event_triggered = true;
             input.updateMouse(&mouse_state, mouse, gfx.screen_w, gfx.screen_h);
 
             // Right button: regenerate terrain
@@ -178,6 +182,9 @@ pub fn main() uefi.Status {
         if (game_of_life.isDead() and game_of_life.generation > 0) {
             ui.drawCivilizationCollapsed(buffers.foreground, gfx.stride, gfx.screen_w, gfx.screen_h, game_of_life.generation);
         }
+
+        // Draw mouse debug info (always show)
+        ui.drawMouseDebugInfo(buffers.foreground, gfx.stride, &mouse_state, events.num_events);
 
         // Draw debug info
         if (config.show_debug) {
