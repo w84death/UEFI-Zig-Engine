@@ -1,10 +1,10 @@
 // Runtime configuration - values that can change during execution
 
 // Game of Life update configuration
-pub var gol_update_interval: u32 = 30;
+pub var gol_update_interval: u32 = 1;
 pub const GOL_INTERVAL_MIN: u32 = 1;
 pub const GOL_INTERVAL_MAX: u32 = 120;
-pub const GOL_INTERVAL_STEP: u32 = 5;
+pub const GOL_INTERVAL_STEP: u32 = 1;
 
 // Game of Life cell configuration
 pub const YOUNG_THRESHOLD: u8 = 5;
@@ -27,7 +27,7 @@ pub const DURATION_LONG: u32 = 6;
 
 /// Reset all runtime configuration to defaults
 pub fn resetAll() void {
-    gol_update_interval = 30;
+    gol_update_interval = 1;
     show_tileset = false;
     show_debug = true;
 }
